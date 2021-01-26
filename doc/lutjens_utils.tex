@@ -1,0 +1,68 @@
+
+%\usepackage{graphics} % for pdf, bitmapped graphics files
+\usepackage{graphicx} % more modern
+%\usepackage{epsfig} % for postscript graphics files
+\usepackage{amsfonts}
+\usepackage{amsmath,soul}
+\usepackage{amssymb}
+\usepackage[capitalize]{cleveref} %cref
+%\crefformat{equation}{(#2#1#3)}%
+%\Crefformat{equation}{Equations~(#2#1#3)}
+%\Crefname{equation}{Equation}{}
+
+\usepackage{dsfont} % mathds
+\usepackage[font=small,skip=0pt]{subcaption} %subfigure
+\usepackage{balance}
+\usepackage[font=small]{caption}
+\usepackage{bm} % bold italic vectors
+\usepackage{wrapfig}
+\usepackage{float} % To place figure on top right as float
+
+% Define special colors
+\usepackage{color}
+\usepackage[svgnames]{xcolor} \definecolor{DarkGreen}{rgb}{0,0.5,0}
+\definecolor{DarkRed}{rgb}{0.75,0,0}
+
+% Define author comments
+\usepackage[authormarkuptext=name,addedmarkup=bf,authormarkupposition=left]{changes}
+%\usepackage[final]{changes} %Use this to hide all comments.
+\definechangesauthor[name={J.~H.}, color={blue}]{jh}
+\definechangesauthor[name={M.~E.}, color={red}]{me}
+\definechangesauthor[name={B.~L.}, color={green}]{bl}
+\setlength {\marginparwidth }{2cm}
+\newcommand{\XX}[1]{\added[id=jh,remark={}]{#1}}
+\newcommand{\meXX}[1]{\added[id=me,remark={}]{#1}}
+\newcommand{\blXX}[1]{\added[id=bl,remark={}]{#1}}
+\newcommand{\jsec}[1]{\marginpar{\fcolorbox{yellow}{yellow}{\parbox{0.7in}{\raggedright
+        \color{blue} \tiny #1 }}}}
+\newcommand{\hsec}[1]{\marginpar{\fcolorbox{yellow}{yellow}{\parbox{0.7in}{\raggedright
+        \color{green} \tiny #1 }}}}
+\newcommand{\jhmargin}[2]{{\color{orange}#1}\marginpar{\color{red}\tiny\raggedright
+    \bf [JH] #2}}
+
+% tikz
+\usepackage{tikz,mathtools}
+\crefformat{equation}{(#2#1#3)}
+\Crefformat{equation}{Equation~(#2#1#3)}
+\Crefname{equation}{Equation}{Equations}
+\newcommand{\inputTikZ}[2]{\scalebox{#1}{\input{#2}}}
+\usetikzlibrary{shapes,positioning,automata,arrows,fit,backgrounds,calc}
+\tikzstyle{block} = [draw, fill=blue!20, rectangle,minimum height=1em,
+minimum width=2em] \tikzstyle{sum} = [draw, fill=blue!20, circle, node
+distance=1cm] \tikzstyle{input} = [coordinate] \tikzstyle{output} =
+[coordinate] \tikzstyle{pinstyle} = [pin edge={to-,thin,black}]
+\usetikzlibrary{trees} \usetikzlibrary{decorations.pathmorphing}
+\usetikzlibrary{decorations.markings}
+\definecolor{darkgreen}{rgb}{0,0.5,0}
+\definecolor{darkred}{rgb}{220,20,60}
+
+% Define argmin argmax
+\DeclareMathOperator*{\argmin}{\arg\!\min}
+\DeclareMathOperator*{\argmax}{\arg\!\max}
+
+% Single line comment
+\newcommand{\cmmnt}[1]{\ignorespaces}
+
+% Define commands for itemized lists
+\newcommand{\bit}{\begin{itemize}}
+\newcommand{\ei}{\end{itemize}}
