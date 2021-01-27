@@ -5,211 +5,9 @@ import argparse
 import scipy.stats as st
 from scipy.special import factorial
 
+import src.plotting as plotting
+from src.diffeq import StochDiffEq
 
-class StochDiffEq():
-    def __init__(self):
-        pass
-
-    def diffusioneqn(self, xgrid, F, k, source, rightbc):
-        """
-        Solve 1-D diffusion equation with given diffusivity field k
-        and left-hand flux F. Domain is given by xgrid (should be [0,1])
-        
-        Inputs:
-        xgrid (np.array(n_grid)): grid points
-        F (float): flux at left-hand boundary, k*du/dx = -F 
-        source (np.array(n_grid)): source term, either a vector of values at points in xgrid or a constant
-        rightbc (float): Dirichlet BC on right-hand boundary
-        Outputs:
-        usolution (np.array(xgrid)): solution
-        """
-        N = xgrid.shape[0] # Number of grid points
-        h = xgrid[N-1]-xgrid[N-2] # step size; assuming uniform grid
-
-        # Set up discrete system f = Au + b using second-order finite difference scheme
-        A = np.zeros((N-1, N-1)) 
-        b = np.zeros((N-1,1)) 
-        if np.isscalar(source): 
-            f = -source * np.ones((N-1,1))
-        else:
-            f = -source[:N-1,np.newaxis] # [:N] 
-
-        # diagonal entries
-        A = A - 2.*np.diag(k[:N-1]) - np.diag(k[1:N]) - np.diag(np.hstack((k[0], k[:N-2]))) 
-
-        # superdiagonal
-        A = A + np.diag(k[:N-2], 1) + np.diag(k[1:N-1], 1) 
-
-        # subdiagonal
-        A = A + np.diag(k[:N-2], -1) + np.diag(k[1:N-1], -1)
-
-        A = A / (2. * np.power(h,2))
-
-        # Treat Neumann BC on left side
-        A[0,1] = A[0,1] + k[0] / np.power(h,2)
-        b[0] = 2.*F / h # b(1) = 2*F/h;
-
-        # Treat Dirichlet BC on right side
-        b[N-2] = rightbc * (k[N-1] + k[N-2]) / (2.*np.power(h,2)) 
-
-        # Solve it: Au = f-b
-        uinternal = np.linalg.solve(A, (f-b))
-
-        usolution = np.vstack((uinternal, rightbc)) 
-
-        return usolution
-
-    def ridge_plot_prob_dist_at_sample_x(self, xs, uxs):
-        '''
-        Creates ridge plot, plotting a probability distribution over all values in uxs 
-        Source: https://matplotlib.org/matplotblog/posts/create-ridgeplots-in-matplotlib/
-        Input
-        xs np.array(n_curves)
-        uxs np.array(n_curves, n_samples)
-        '''
-        import matplotlib.gridspec as grid_spec
-
-        gs = grid_spec.GridSpec(len(xs),1)
-        fig = plt.figure(figsize=(16,9))
-
-        axs = []
-        for i, x in enumerate(xs):
-            x = xs[i]
-
-            # creating new axes object
-            axs.append(fig.add_subplot(gs[i:i+1, 0:]))
-
-            # plotting the distribution
-            histogram = axs[-1].hist(uxs[i,:],  density=True, color="blue", alpha=0.6)#bins='auto',#, lw=1) bins='auto', density=True, 
-            #axs[-1].fill_between(range(uxs[i,:].shape[0]), uxs[i,:] , alpha=1,color=colors[i])
-
-            # setting uniform x and y lims
-            axs[-1].set_ylim(0,20)
-            u_min = np.min(uxs[:,:])#.mean(axis=0))
-            u_max = np.max(uxs[:,:])#.mean(axis=0))
-            axs[-1].set_xlim(u_min, u_max)
-
-            # make background transparent
-            rect = axs[-1].patch
-            rect.set_alpha(0)
-
-            # remove borders, axis ticks, and labels
-            axs[-1].set_yticklabels([])
-
-            # Label x-axis
-            if i == len(xs)-1:
-                axs[-1].set_xlabel(r"$u(x)$", fontsize=16)
-            else:
-                axs[-1].set_xticklabels([])
-
-            spines = ["top","right","left","bottom"]
-            for s in spines:
-                axs[-1].spines[s].set_visible(False)
-
-            # Label y-axis
-            adj_x = x#.replace(" ","\n")
-            axs[-1].set_ylabel(r'$x=$'+str(x))
-            #text(-0.02,0,adj_x,fontweight="bold",fontsize=14,ha="right")
-
-
-        gs.update(hspace=-0.0)
-
-        fig.text(0.07,0.85,"prob dist at sample x",fontsize=20)
-        #plt.title("prob dist at sample x",fontsize=20)
-
-        plt.tight_layout()
-        plt.savefig('figures/plot_prob_dist_at_sample_x.png')
-
-        plt.show()
-
-    def plot_sol(self, xgrid, u, ux, ux_cum_mean, ux_cum_std, ux_cum_sem, ux_conf_int, ux_cum_var, x, xgrid_true, u_true=None):
-        """
-        Plot solution and statistics
-        Inputs:
-        xgrid_true (np.array(n_grid)): grid of true solution
-        u_true (np.array(n_grid)): true solution
-        """
-        fig, axs = plt.subplots(2,3, figsize=(15,10), dpi=150)
-        # Plot sample solutions
-        n_plotted_samples = 4
-        for i in range(n_plotted_samples):
-            axs[0,0].plot(xgrid, u[-i,:])
-        axs[0,0].set_xlabel(r'x')
-        axs[0,0].set_ylabel(r'$u_{n=0}(x,\omega)$')
-        axs[0,0].set_title('sample solutions')
-
-        # Plot mean and std dev of solution
-        print('u', u.shape)
-        if u_true is not None:
-            axs[0,1].plot(xgrid_true, u_true, color='black', label=r'$u(x, k_{true})$')
-        u_mean = u.mean(axis=0)
-        u_std = u.std(axis=0)
-        axs[0,1].plot(xgrid, u_mean[:], label=r'$\mathbf{E}_w[u(x,w)]$')
-        axs[0,1].set_xlabel('x')
-        #axs[0,1].set_ylabel(r'$u(x{=}'+str(x)+', \omega)$')
-        axs[0,1].fill_between(xgrid,#range(u_mean.shape[0]),
-            u_mean + u_std, u_mean - u_std, 
-            alpha=0.3, color='blue',
-            label=r'$\mathbf{E}_w[u(x,w)] \pm \sigma_n$')
-        axs[0,1].set_title('mean and std dev of solution')
-        axs[0,1].legend()
-
-
-        axs[1,0].plot(ux[:])
-        axs[1,0].set_xlabel('sample id, n')
-        axs[1,0].set_ylabel(r'$u_n(x='+str(x)+', \omega)$')
-        axs[1,0].set_title('sol at x over iterations')
-
-        axs[1,1].plot(ux_cum_mean[:], label=r'$\bar u_n = \mathbf{E}_{n^* \in \{0,..., n\}}[u_{n^*}(x{=}'+str(x)+',\omega)]$')
-        axs[1,1].fill_between(range(ux_cum_mean.shape[0]), 
-            ux_cum_mean[:] + ux_cum_std[:], 
-            ux_cum_mean[:] - ux_cum_std[:], 
-            alpha=0.4, color='blue',
-            label=r'$\bar u_n \pm \sigma_n$')
-        axs[1,1].fill_between(range(ux_cum_mean.shape[0]), 
-            ux_cum_mean[:] + ux_cum_sem[:], 
-            ux_cum_mean[:] - ux_cum_sem[:], 
-            alpha=0.4, color='black',
-            label=r'$\bar u_n \pm$ std err$_n$')
-        axs[1,1].fill_between(range(ux_cum_mean.shape[0]), 
-            ux_conf_int[:,0], ux_conf_int[:,1], 
-            alpha=0.4, color='orange',
-            label=r'$95\% conf. interval; P $')
-        axs[1,1].set_xlabel('sample id, n')
-        axs[1,1].set_ylabel(r'$u(x{=}'+str(x)+', \omega)$')
-        axs[1,1].set_ylim((ux_cum_mean.min()-np.nanmax(ux_cum_std), ux_cum_mean.max()+np.nanmax(ux_cum_std)))
-        axs[1,1].set_title('sample mean over iterations')
-        axs[1,1].legend()
-
-        axs[1,2].plot(ux_cum_var[:], label=r'$\sigma^2_n$')
-        axs[1,2].set_xlabel('sample id, n')
-        axs[1,2].set_ylabel(r'$\sigma^2(u(x{=}'+str(x)+', \omega)$')
-        axs[1,2].fill_between(range(ux_cum_var.shape[0]), 
-            ux_cum_var[:] + ux_cum_sem[:], 
-            ux_cum_var[:] - ux_cum_sem[:], 
-            alpha=0.4, color='black',
-            label=r'$\sigma^2_n \pm$ std err$_n$')
-        axs[1,2].set_title('sample std dev. at x over iterations')
-        axs[1,2].legend()
-
-        #axs[1,1].plot(ux_conf_int[:])
-        #axs[1,1].set_xlabel('sample id, n')
-        #axs[1,1].set_ylabel(r'$V[E[u_{n\prime}(x='+str(x)+',w)]_0^n]$')
-        #axs[1,1].set_title('95\% conf. int.')
-
-
-        fig.tight_layout()
-        plt.savefig('figures/proj1_3.png')
-
-        # Plot prob. dist. at sample locations
-        xs = np.linspace(0,1, 5)#[0., 0.25, 0.5, 0.75]
-        ux_samples = np.empty((len(xs), u.shape[0]))
-        for i, x_sample in enumerate(xs):
-            x_id = (np.abs(xgrid - x_sample)).argmin()
-            ux_samples[i,:] = u[:, x_id]
-
-        self.ridge_plot_prob_dist_at_sample_x(xs, ux_samples)
-        
 def get_k_piecewise_constant(n_grid):
     n_y = 4 # number of different diffusivities
     assert n_grid%n_y == 0
@@ -289,7 +87,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
         plt.xlabel(r'mode id')
         plt.ylabel(r'eigenvalue of prior covariance')
         plt.legend()
-        plt.savefig('figures/kl_exp_eigvals.png')
+        plt.savefig('doc/figures/kl_exp_eigvals.png')
         plt.close()
 
         # Plot eigenvectors
@@ -299,7 +97,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
         plt.xlabel(r'location, $x$')
         plt.ylabel(r'eigenvector of prior covariance')
         plt.legend()
-        plt.savefig('figures/kl_exp_eigvecs.png')
+        plt.savefig('doc/figures/kl_exp_eigvecs.png')
         plt.close()
         
         # Plot KL expansion
@@ -318,7 +116,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
         plt.xlabel(r'location, $x$')
         plt.ylabel(r'KL(log-permeability), $KL(Y)$')
         plt.legend()
-        plt.savefig('figures/kl_exp_log_perm.png')
+        plt.savefig('doc/figures/kl_exp_log_perm.png')
         plt.close()
         
     return Y, exp_Y, trunc_err, eigvals_major, eigvecs_major, sample_kl
@@ -393,7 +191,6 @@ def gauss_hermite(x, deg, verbose=False):
     y = herm(x)
 
     return y
-
 
 ### 
 # Polynomial Chaos Expansion
@@ -588,7 +385,7 @@ def get_pce_coefs(poly_deg, xgrid=None,
         plt.ylim((-10,20))
         plt.tight_layout()
         plt.legend()
-        plt.savefig('figures/hermite_poly_Herm.png')
+        plt.savefig('doc/figures/hermite_poly_Herm.png')
 
     return c_alphas
 
@@ -708,7 +505,7 @@ def polynomial_chaos_expansion(xgrids,
         plt.ylim((-10,20))
         plt.tight_layout()
         plt.legend()
-        plt.savefig('figures/hermite_poly.png')
+        plt.savefig('doc/figures/hermite_poly.png')
         plt.close()
 
         # Plot the stochastic process
@@ -720,7 +517,7 @@ def polynomial_chaos_expansion(xgrids,
         plt.ylabel(r'log-permeability $x$')
         plt.tight_layout()
         plt.legend()
-        plt.savefig('figures/polynomial_chaos.png')
+        plt.savefig('doc/figures/polynomial_chaos.png')
         plt.close()
 
         # Plot mean and variance of PCE-estimated stochastic process 
@@ -745,7 +542,7 @@ def polynomial_chaos_expansion(xgrids,
         plt.fill_between(xgrid, exp_Y_plt_mean+exp_Y_plt_std, exp_Y_plt_mean-exp_Y_plt_std,alpha=0.4,color='blue', label=r'$Y_{PCE} \pm \sigma$')
         plt.xlabel(r'location, $x$')
         plt.ylabel(r'PCE of permeability, $PCE(\exp(Y))$')
-        plt.savefig('figures/pce_exp_of_y.png')
+        plt.savefig('doc/figures/pce_exp_of_y.png')
         plt.close()
 
         # Plot PCE coefficients
@@ -756,21 +553,10 @@ def polynomial_chaos_expansion(xgrids,
         plt.ylabel(r'PCE coefficient, $C_{\vec\alpha}(x)$')
         plt.tight_layout()
         plt.legend()
-        plt.savefig('figures/pce_coefs.png')
+        plt.savefig('doc/figures/pce_coefs.png')
         plt.close()
 
     return y_pce, exp_y_pce, trunc_err, c_alphas, sample_pce
-
-# https://salib.readthedocs.io/en/latest/api.html#sobol-sensitivity-analysis
-def plot_trunc_err(truncs, trunc_err):
-    # Input
-    # truncs np.array(n_truncations)
-    # trunc_err np.array(n_truncations)
-    fig, axs = plt.subplots(nrows=1, ncols=1)
-    axs.plot(truncs, trunc_err)
-    axs.set_xlabel(r'truncation, $r$')
-    axs.set_ylabel(r'truncation err.')
-    fig.savefig('figures/ai_trunc_err.png')
 
 # PSET 3: inverse problem
 def get_msmts(plot=False):
@@ -791,61 +577,9 @@ def get_msmts(plot=False):
         axs[2].set_xlabel(r'location, $x$')
         axs[2].set_ylabel(r'log-permeability, $Y$')
         fig.tight_layout()
-        fig.savefig('figures/ai_msmts.png')
+        fig.savefig('doc/figures/ai_msmts.png')
 
     return x_obs, u_obs, k_true, xgrid
-
-def plot_accept_rates(accept_rates):
-    """
-    Create plot of acceptance rates
-    """
-    fig, axs = plt.subplots(nrows=1, ncols=1, dpi=300)
-    n_samples = accept_rates.shape[0]
-    axs.plot(range(n_samples), accept_rates)
-    axs.set_xlabel(r'sample_id, $t$')
-    axs.set_ylabel(r'accept rates')
-        
-    fig.tight_layout()
-    fig.savefig('figures/mh_accept_rates.png')
-
-def plot_k(xgrid, k, k_true, y_gp_mean, y_gp_cov):
-    """
-    Plot k samples vs. ground-truth
-    Input:
-    xgrid: np.array(n_grid): Grid with equidistant grid spacing, n_grid
-    k: np.array(n_samples, n_grid): Samples of permeability, k
-    k_true: np.array(n_grid): Ground truth of permeability, k
-    """
-    kmean = k.mean(axis=0)
-    kvar = k.var(axis=0)
-    fig, axs = plt.subplots(nrows=1, ncols=2, dpi=300)
-    axs[0].plot(xgrid, k_true, color='black', label=r'true $k$')
-    axs[0].plot(xgrid, kmean, color='blue')#, label=r'post. $\bar k_n$')
-    axs[0].fill_between(xgrid, kmean+kvar, kmean-kvar,alpha=0.4,color='blue', label=r'post. $\bar k_n \pm \sigma_k^2$')
-    axs[0].set_ylim((k_true.min()-5.,k_true.max()+5.))
-    axs[0].set_xlabel(r'location, $x$')
-    axs[0].set_ylabel(r'permeability, $k$')
-    axs[0].legend()
-    
-    # log permeability
-    Y = np.log(k)
-    Y_true = np.log(k_true)
-    Ymean = Y.mean(axis=0)
-    Yvar = Y.var(axis=0)
-    # True
-    axs[1].plot(xgrid, Y_true, color='black', label=r'true $Y$')
-    # Prior
-    axs[1].plot(xgrid, y_gp_mean, color='green')#, label=r'prior $\bar Y_n$')
-    axs[1].fill_between(xgrid, y_gp_mean+np.diag(y_gp_cov), y_gp_mean-np.diag(y_gp_cov),alpha=0.4,color='green', label=r'prior $\bar Y_n \pm \bar\sigma_Y^2$')
-    # Posterior
-    axs[1].plot(xgrid, Ymean, color='blue')#, label=r'post. $\bar Y_n$')
-    axs[1].fill_between(xgrid, Ymean+Yvar, Ymean-Yvar,alpha=0.4,color='blue', label=r'post. $\bar Y_n \pm \bar\sigma_Y^2$')
-    axs[1].set_xlabel(r'location, $x$')
-    axs[1].set_ylabel(r'log-permeability, $Y$')
-    axs[1].legend()
-        
-    fig.tight_layout()
-    fig.savefig('figures/k_gp_vs_msmts.png')
 
 def injection_wells(xgrid, n_wells=4, strength=0.8, width=0.05, plot=True):
     """
@@ -874,7 +608,7 @@ def injection_wells(xgrid, n_wells=4, strength=0.8, width=0.05, plot=True):
         axs.set_xlabel(r'location, $x$')
         axs.set_ylabel(r'source, $s$')
         fig.tight_layout()
-        fig.savefig('figures/source_injection_wells.png')
+        fig.savefig('doc/figures/source_injection_wells.png')
 
     return source
 
@@ -922,7 +656,6 @@ def ln_gaussian(y, mean=np.zeros(2), std=np.ones(2)):
     g = np.log(1.) - np.log(std * np.sqrt(2*np.pi)) + (-0.5 * np.power((y-mean),2) / np.power(std,2))
     return g
 
-
 def gaussian_lnpost(u, u_obs, obs_noise=1e-4):
     """
     Computes likelihood of, u, given measurements, u_obs, assuming Gaussian msmt noise
@@ -946,22 +679,32 @@ def get_sol_w_gp_prior(xgrid,
         sample_y=None,
         pce_coefs=None):
     """
-    Computes a solution of stochastic elliptic equation given all parameters
+    Computes a solution of the stochastic elliptic equation given all parameters
+    Inputs: 
     x_obs (np.array(n_msmts)): if not None, only values at xobs are returned
+    sample_y function(): Function that draws samples of log-permeability, Y
+    flux function()->float: Function that returns flux; could be stochastic or deterministic  
+    
+    Outputs:
+    u_obs (np.array(n_msmts)): solution, u, at measurement locations
+    vals (dict()): Dictionary of model results, e.g., Y, exp_Y, u, trunc_err, coefs, 
+    sample_y fn(): Function that samples log-permeability, y
     """
     vals = {}
-
+    # Sample stochastic log-permeability
     if sample_y is None:
+        # Assume log-permeability is gaussian process
         vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'], sample_y = sample_low_dim_gaussian_process(xgrid, 
             mu_y=y_gp_mean, cov=y_gp_cov,
             trunc=trunc, expansion=expansion, z_candidate=z_candidate, 
             poly_deg=poly_deg, pce_coefs=pce_coefs)
     else:
+        # Sample log-permeability with given fn
         vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'] = sample_y()
     # Compute permeability
     vals['k'] = vals['exp_Y'] # np.exp(vals['Y']) 
     # Compute solution
-    vals['u'] = stochDiffEq.diffusioneqn(xgrid, F=flux, k=vals['k'], source=source, rightbc=rightbc)[:,0]
+    vals['u'] = stochDiffEq.diffusioneqn(xgrid, F=flux(), k=vals['k'], source=source, rightbc=rightbc)[:,0]
 
     # Reduce solution to observed values
     if x_obs is None:
@@ -974,83 +717,6 @@ def get_sol_w_gp_prior(xgrid,
         u_obs = vals['u'][obs_idxs]
 
     return u_obs, vals, sample_y
-
-
-def plot_mh_sampler(chain, lnprobs, disable_ticks=False):
-    # Plot metropolis hastings chain and log posterios
-    sample_ids = np.arange(chain.shape[0], dtype=int)
-    ndim = chain.shape[1]
-
-    # Plot mh chain
-    nrows = np.ceil(np.sqrt(ndim)).astype(int)
-    fig, axs = plt.subplots(nrows=nrows, ncols=nrows, dpi=300)
-    for i in range(ndim):
-        if ndim > 1: 
-            col_id = i%nrows
-            row_id = np.floor((i-col_id)/nrows).astype(int)
-            ax = axs[row_id, col_id]
-        ax.plot(sample_ids, chain[:,i], label=f'{i}')
-        if col_id == 0: 
-            ax.set_ylabel(r'parameter, $z$')
-        elif disable_ticks:
-            ax.set_yticks([])
-        if row_id == nrows-1:
-            ax.set_xlabel(r'sample id, $t$')
-        elif disable_ticks:
-            ax.set_xticks([])
-    fig.tight_layout()
-    fig.savefig('figures/mh_chain.png')
-
-    # Plot mh lnprobs
-    fig, axs = plt.subplots(nrows=1, ncols=1, dpi=300)
-    axs.plot(sample_ids, lnprobs[:])
-    axs.set_ylabel(r'log-probability, $p(u^{(t)}|X)$')
-    axs.set_xlabel(r'sample id, $t$')
-    axs.set_ylim((-5.,lnprobs.max()+1.))
-    fig.tight_layout()
-    fig.savefig('figures/mh_lnprobs.png')
-
-    # Plot autocorrelation of parameters as fn of lag (only useful after warmup)
-    nrows = np.ceil(np.sqrt(ndim)).astype(int)
-    fig, axs = plt.subplots(nrows=nrows, ncols=nrows, dpi=300)
-    for i in range(ndim):
-        autocorr_i = np.correlate(chain[:,i], chain[:,i], mode='full')
-        autocorr_i = autocorr_i[int(autocorr_i.size/2.):] # take 0 to +inf
-        if ndim > 1: 
-            col_id = i%nrows
-            row_id = np.floor((i-col_id)/nrows).astype(int)
-            ax = axs[row_id, col_id]
-        ax.plot(sample_ids, autocorr_i, label=f'{i}')
-        if col_id == 0: 
-            ax.set_ylabel(r'autocorrelation')
-        elif disable_ticks:
-            ax.set_yticks([])
-        if row_id == nrows-1:
-            ax.set_xlabel(r'sample id, $t$')
-        elif disable_ticks:
-            ax.set_xticks([])
-    fig.tight_layout()
-    fig.savefig('figures/mh_autocorr.png')
-
-    # Plot posterior distribution of parameters (only useful after warmup)
-    nrows = np.ceil(np.sqrt(ndim)).astype(int)
-    fig, axs = plt.subplots(nrows=nrows, ncols=nrows, dpi=300)
-    for i in range(ndim):
-        if ndim > 1: 
-            col_id = i%nrows
-            row_id = np.floor((i-col_id)/nrows).astype(int)
-            ax = axs[row_id, col_id]
-        hist_i = ax.hist(chain[:,i], density=True, color="blue", alpha=0.6, label=f'{i}')#, bins=50)#bins='auto',#, lw=1) bins='auto', density=True, 
-        if col_id == 0: 
-            ax.set_ylabel(r'posterior $p(z|X)$')
-        elif disable_ticks:
-            ax.set_yticks([])
-        if row_id == nrows-1:
-            ax.set_xlabel(r'$z$')
-        elif disable_ticks:
-            ax.set_xticks([])
-    fig.tight_layout()
-    fig.savefig('figures/mh_param_post.png')
 
 def mh_sampler(z_init,
     proposal_fn=gaussian_proposal, proposal_fn_args={'std':1.},
@@ -1071,7 +737,12 @@ def mh_sampler(z_init,
     lnpost_fn_args (dict()): computes log-posterior
     n_samples (int): number of samples
     warmup_steps (int): number of warmup steps
+
     Outputs:
+    chain (np.array((n_samples, ndim))): Chain of samples of the approximate posterior of z, after warmup
+    lnprobs (np.array(n_samples)): log-probabilities to each sample in the chain
+    accept_rates (np.array(n_samples)): acceptance rates of each sample in the chain
+    logs (n_samples*[])
     """
     # initialize chain, acceptance rate and lnprob
     ndim = z_init.shape[0]
@@ -1122,31 +793,9 @@ def mh_sampler(z_init,
     logs = logs[warmup_steps:]
     
     if plot:
-        plot_mh_sampler(chain, lnprobs)
+        plotting.plot_mh_sampler(chain, lnprobs)
 
     return chain, lnprobs, accept_rates, logs
-
-def plot_ensemble_kf(z_post_samples,disable_ticks=False):
-    ndim = z_post_samples.shape[-1]
-    # Plot posterior distribution of parameters 
-    nrows = np.ceil(np.sqrt(ndim)).astype(int)
-    fig, axs = plt.subplots(nrows=nrows, ncols=nrows, dpi=300)
-    for i in range(ndim):
-        if ndim > 1: 
-            col_id = i%nrows
-            row_id = np.floor((i-col_id)/nrows).astype(int)
-            ax = axs[row_id, col_id]
-        hist_i = ax.hist(z_post_samples[:,i], density=True, color="blue", alpha=0.6, label=f'{i}')#, bins=50)#bins='auto',#, lw=1) bins='auto', density=True, 
-        if col_id == 0: 
-            ax.set_ylabel(r'posterior $p(z|X)$')
-        elif disable_ticks:
-            ax.set_yticks([])
-        if row_id == nrows-1:
-            ax.set_xlabel(r'$z$')
-        elif disable_ticks:
-            ax.set_xticks([])
-    fig.tight_layout()
-    fig.savefig('figures/enkf_param_post.png')
 
 def ensemble_kalman_filter(z_init,
     proposal_fn=gaussian_proposal, proposal_fn_args={'std':1.},
@@ -1213,7 +862,7 @@ def ensemble_kalman_filter(z_init,
         _, logs[n], _= model(**model_args)
 
     if plot:
-        plot_ensemble_kf(z_post_samples)
+        plotting.plot_ensemble_kf(z_post_samples)
 
     return z_post_samples, logs
 
@@ -1278,57 +927,115 @@ def get_parallel_fn(model_tasks):
         pass
     model_outputs = ray.get(model_tasks) # [0, 1, 2, 3]
     return model_outputs
-def plot_k_vs_ks_nn(k, k_samples_nn):
-    plt.figure(figsize=(15,8))
-    n_samples = k_samples_nn.shape[0]
-    k_samples_mean = k_samples_nn.mean(axis=0)
-    k_samples_std = k_samples_nn.std(axis=0)
-    plt.plot(xgrid, k_samples_mean, color='blue')#, label=r'$mathbf{E}_{\xi}[k]$')
-    plt.fill_between(xgrid,#range(u_mean.shape[0]),
-        k_samples_mean + k_samples_std, k_samples_mean - k_samples_std, 
-        alpha=0.3, color='blue',
-        label=r'PCE target: $\mathbf{E}_\xi[k] \pm \sigma_n$')
-    k_mean = k.mean(axis=0)
-    k_std = k.std(axis=0)
-    plt.plot(xgrid, k_mean, color='green')#, label=r'$mathbf{E}_{\xi}[k]$')
-    plt.fill_between(xgrid,#range(u_mean.shape[0]),
-        k_mean + k_std, k_mean - k_std, 
-        alpha=0.3, color='green',
-        label=r'Learned: $\mathbf{E}_\xi[k] \pm \sigma_n$')
-    plt.xlabel(r"location, $x$")
-    plt.ylabel(r"diffusion, $k$")
-    plt.legend()
-    plt.title(r'$k$')
-    plt.savefig('../final_project/figures/nn_k_samples.png')
+
+def calc_stats(u):
+    # Calculates stats of set of samples u
+    # Input:
+    # u np.array(n_samples): function of x
+
+    # Calculate estimated sample mean at each sampling iteration
+    #ux_cum_mean = np.divide(np.cumsum(ux)*np.ones(ux.shape[0]), np.arange(ux.shape[0], dtype=float)+1)
+    #ux_cum_mean = np.asarray([np.mean(ux[:n]) for n in range(n_samples)])
+    # Calculate estimated standard deviation of the estimated mean at each sampling iteration 
+    #ux_cum_std = np.asarray([np.std(ux_cum_mean[:n+1]) for n in range(n_samples)]) 
+
+    # Calculate statistics
+    conf_bnds = 0.95
+    u_stats = {
+        'ux_cum_mean': np.zeros((n_samples)),
+        'ux_cum_std' : np.zeros((n_samples)),
+        'ux_cum_sem' : np.zeros((n_samples)),
+        'ux_cum_var' : np.zeros((n_samples)),
+        'ux_conf_int' : np.zeros((n_samples, 2)),
+    }
+
+    for n in range(n_samples):
+        u_stats['ux_cum_mean'][n] = np.mean(u[:n+1])
+        u_stats['ux_cum_std'][n] = np.std(u[:n+1], ddof=1) # Use n-1 in denominator for unbiased estimate. 
+        u_stats['ux_cum_sem'][n] = st.sem(u[:n+1])
+        u_stats['ux_cum_var'][n] = np.var(u[:n+1])
+        if n>0:
+            u_stats['ux_conf_int'][n,:] = st.t.interval(conf_bnds, n-1, loc=u_stats['ux_cum_mean'][n], scale=st.sem(u[:n+1]))
+
+    """                        
+    for n in range(n_samples):
+        est_n = u_stats['ux_cum_mean'][:n+1]
+        #if n==0:
+        #    ux_conf_int[n,:] = np.array([u_stats['ux_cum_mean'][:n+1], u_stats['ux_cum_mean'][:n+1]])[0]
+        #else:
+        ux_conf_int[n,:] = st.t.interval(conf_bnds, est_n.shape[0]-1, loc=np.mean(est_n), scale=st.sem(est_n))
+    """
+    return u_stats
+
+def get_n_model_samples(model=get_sol_w_gp_prior, model_args={}, 
+        n_samples=2, 
+        parallel=False,
+        path_load_simdata=None, path_store_simdata='pce.pickle'):
+    """
+    Returns n samples of the model
+    Inputs:
+    model fn:**model_args->u_obs, logs, sample_y: continuous function 
+    model_args dict(): 
+    parallel bool: if true, sample the model in parallel; TODO: implement and test
+    path_load_simdata string: path to n model samples
+    path_store_simdata string: path to store model samples
+    Outputs:
+    logs n_samples*[]: n samples of the model
+    """
+    # Load simulation data instead of 
+    if path_load_simdata is not None:
+        with open(path_load_simdata, 'rb') as handle:
+            logs = pickle.load(handle)            
+    else:
+        # if args.parallel: 
+        #    model_r, model_tasks = init_preprocessing(fn=get_sol_w_gp_prior, parallel=True)
+
+        # Sample solution
+        logs = n_samples * [None]
+        for n in range(n_samples):
+            if n%10==0: 
+                print('n', n)
+            # Sample solution
+            _, logs[n], model_args['sample_y'] = get_sol_w_gp_prior(**model_args)
+                            
+        # Parse parallel tasks
+        # model_tasks = get_parallel_fn(model_tasks)
+        # for n in range(n_samples):
+        #    _, logs[n] = model_tasks[n]
+        
+        # Store data
+        with open(path_store_simdata, 'wb') as handle:
+            pickle.dump(logs, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    return logs 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='project 1-2')
-    parser.add_argument('--pset2', action = "store_true",
-            help='diffusion eqn')
-    parser.add_argument('--pce', action = "store_true",
-            help='polynomial chaos expansion (pset 2aii)')
     parser.add_argument('--poly_deg', default=4, type=int,
             help='Maximum degree of polynomials in PCE or eigenvectors in KL')
     parser.add_argument('--parallel', action = "store_true",
             help='enable parallel processing')
     parser.add_argument('--inverse_problem', action="store_true",
-            help='inverse_problem')
+            help='inverse_problem; i.e., estimate diffusivity parameter from observations of the solution')
     parser.add_argument('--mcmc', action="store_true",
             help='solve inverse problem with MCMC metropolis-hastings')
     parser.add_argument('--ensemble_kf', action="store_true",
             help='solve inverse problem with ensemble kalman filter')
+    parser.add_argument('--pce', action = "store_true",
+            help='polynomial chaos expansion (pset 2aii)')
+    parser.add_argument('--nn_pce', action = "store_true",
+            help='use a neural net to approximate the polynomial chaos coefficients')
     parser.add_argument('--eval_trunc_err', action = "store_true",
             help='evaluation truncation error for pset2.ai')
     parser.add_argument('--n_samples', default=1000, type=int,
             help='number of samples')
     parser.add_argument('--warmup_steps', default=1000, type=int,
             help='number of warmup steps for MCMC')
-    parser.add_argument('--sim_datapath', default=None, type=str,
+    parser.add_argument('--path_load_simdata', default=None, type=str,
             help='path to logged simulation data, e.g., pce.pickle')
-    parser.add_argument('--nn_pce', action = "store_true",
-            help='use a neural net to approximate the polynomial chaos coefficients')
     parser.add_argument('--est_param_nn', default='pce_coefs', type=str,
-            help='name of parameter than shall be estimated by neural net, e.g., "pce_coefs", "k"')
+            help='name of parameter than shall be estimated by neural net, e.g., "pce_coefs", "k", "k_true"')
+    parser.add_argument('--rand_flux_bc', action = "store_true",
+            help='use random flux for van neumann condition on left boundary')
 
     args = parser.parse_args()
     # Set random seeds
@@ -1337,20 +1044,10 @@ if __name__ == "__main__":
         import torch
         torch.manual_seed(0)
 
-
     # Pset 3: Get xgrid from ground-truth msmts
     x_obs, u_obs, k_true, xgrid = get_msmts(plot=True)
     n_grid = xgrid.shape[0]
     n_obs = x_obs.shape[0]
-    #MCMC: https://jellis18.github.io/post/2018-01-02-mcmc-part1/
-
-    # Pset 2: Define xgrid
-    if args.pset2:
-        #n_grid = 100 # number of grid points
-        #xgrid = np.linspace(0, 1, n_grid) # vector with grid points
-        #x_obs = xgrid
-        #n_obs = n_grid
-        pass
 
     if args.inverse_problem:
         warmup_steps = args.warmup_steps
@@ -1360,16 +1057,21 @@ if __name__ == "__main__":
     n_samples = args.n_samples
 
     ## Set up SDE initial conditions and parameters
-    if args.pset2:
+    if args.rand_flux_bc:
         mu_f = -1. #-2.
         var_f = .2 #.5
-        flux = np.random.normal(mu_f, var_f, 1) # np.ones(n_grid) * 
+        flux = lambda: np.random.normal(mu_f, var_f, 1) # np.ones(n_grid) * 
         rightbc = 1.
         source = 5. # np.ones((n_grid)) 
     elif args.inverse_problem:
-        flux = -1. 
+        flux = lambda: -1. 
         rightbc = 1.
         source = injection_wells(xgrid, n_wells=4, strength=0.8, width=0.05)
+    else:
+        flux = lambda: -1.
+        rightbc = 1.
+        source = 5.
+
     # Initialize stochastic process prior
     y_gp_mean, y_gp_cov = init_gaussian_process(xgrid, y_mean=1., y_var=0.3, lengthscale=0.3, order=1.)
 
@@ -1397,82 +1099,60 @@ if __name__ == "__main__":
         poly_deg = 0
         z_init = np.random.normal(0., 1., (kl_trunc))
 
-    # Initialize model
+    # Initialize surrogate model
     model_args = {'xgrid':xgrid, 
-        'y_gp_mean':y_gp_mean, 'y_gp_cov':y_gp_cov, 
-        'trunc':kl_trunc, 'expansion':expansion, 'z_candidate':z_init, 
-        'poly_deg':poly_deg, #'pce_coefs': pce_coefs,
-        'flux':flux, 'source':source, 'rightbc':rightbc, 'x_obs':x_obs}
-
+        'y_gp_mean':y_gp_mean, 'y_gp_cov':y_gp_cov, # Diffusion param
+        'trunc':kl_trunc, 'expansion':expansion, 'z_candidate':z_init, 'poly_deg':poly_deg, # Expansion
+        'flux':flux, 'source':source, 'rightbc':rightbc, # BC, other params
+        'x_obs':x_obs}
 
     # Initialize stochastic differential equation
     stochDiffEq = StochDiffEq()
 
     if args.inverse_problem:
+        # Infer KL-expansion's random variable, z, with a sampler. The KL-expansion
+        # approximates the log-permeability, Y. 
         obs_noise = 0.0001 # 1e-4
-        prop_std = np.sqrt(0.01)
-
         model_args['z_candidate'] = z_init
 
         if args.mcmc:
-            # Start for MCMC
-            chain, lnprobs, accept_rates, logs = mh_sampler(z_init,
+            # Infer KL-expansion's random variable, z, with MH-MCMC sampler
+            prop_std = np.sqrt(0.01)
+            _, _, accept_rates, logs = mh_sampler(z_init,
                 proposal_fn=gaussian_proposal, proposal_fn_args={'std':prop_std},
                 model=get_sol_w_gp_prior, model_args=model_args,
                 lnpost_fn=gaussian_lnpost, lnpost_fn_args={'u_obs':u_obs, 'obs_noise':obs_noise}, 
                 n_samples=n_samples, warmup_steps=warmup_steps)
+    
+            plotting.plot_accept_rates(accept_rates)
 
         elif args.ensemble_kf:
             # Infer KL-expansion's random variable, z, with Ensemble Kalman Filter
             z_init = np.zeros(kl_trunc)
             prop_std = 0.1 #np.sqrt(1.)#np.sqrt(0.01)
-            z_post, logs = ensemble_kalman_filter(z_init,
+            _, logs = ensemble_kalman_filter(z_init,
                 proposal_fn=gaussian_proposal, proposal_fn_args={'std':prop_std},
                 model=get_sol_w_gp_prior, model_args=model_args,
-                u_obs = u_obs, obs_noise=obs_noise, 
+                u_obs=u_obs, obs_noise=obs_noise, 
                 n_samples=n_samples)
 
     else:
-        # Load simulation data instead of 
-        if args.sim_datapath is not None:
-            with open(args.sim_datapath, 'rb') as handle:
-                logs = pickle.load(handle)            
-        else:
-            if args.parallel: 
-                model_r, model_tasks = init_preprocessing(fn=get_sol_w_gp_prior, parallel=True)
-
-            # Sample solution
-            sample_y = None
-            logs = n_samples * [None]
-            for n in range(n_samples):
-                if n%10==0: print('n', n)
-                for t, trunc in enumerate(truncs):
-                    # Sample stochastic parameters
-                    if args.pset2:
-                        model_args['flux'] = np.random.normal(mu_f, var_f, 1)
-                    # Sample solution
-                    u_ests, logs[n], sample_y = get_sol_w_gp_prior(**model_args)
-                    
-                    model_args['sample_y'] = sample_y
-            
-            # Parse parallel tasks
-            # model_tasks = get_parallel_fn(model_tasks)
-            # for n in range(n_samples):
-            #    _, logs[n] = model_tasks[n]
-            
-            # Store data
-            with open('pce.pickle', 'wb') as handle:
-                pickle.dump(logs, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # Get n_samples from the model
+        #for t, trunc in enumerate(truncs):
+        logs = get_n_model_samples(model=get_sol_w_gp_prior, model_args=model_args, 
+            n_samples=n_samples, path_load_simdata=args.path_load_simdata)
 
     k, Y, u, trunc_errs, coefs = parse_logs(logs)
+    # TODO: remove the following line; just for testing
+    plotting.plot_k(xgrid=xgrid, k=k, k_true=k_true, y_gp_mean=y_gp_mean, y_gp_cov=y_gp_cov)
 
     # Estimate various parameters with neural network
-    predict_pce_coefs = True
-    if args.nn_pce and predict_pce_coefs:
-        from neural_net import get_param_nn
+    if args.nn_pce:
+        from src.neural_net import get_param_nn
         if args.est_param_nn=='pce_coefs':
             # Approximate PCE coefficients with neural network
-            coefs_nn,_ = get_param_nn(xgrid, coefs[0,:,:], target_name=args.est_param_nn, plot=True)
+
+            coefs_nn,_ = get_param_nn(xgrid, coefs[0,:,:], n_epochs=30, target_name=args.est_param_nn, plot=True)
 
             # Get PCE sampling function with given neural net coefs
             _, _, _, _, sample_pce_nn_coefs = sample_low_dim_gaussian_process(xgrid, 
@@ -1486,86 +1166,57 @@ if __name__ == "__main__":
             # Draw PCE samples
             logs = n_samples * [None]
             for n in range(n_samples):
-                # Sample stochastic parameters
-                if args.pset2:
-                    model_args['flux'] = np.random.normal(mu_f, var_f, 1)
                 u_ests, logs[n], _ = get_sol_w_gp_prior(**model_args)
                 
             k, Y, u, _, _ = parse_logs(logs)
-        elif args.est_param_nn=='k':
+
+        elif args.est_param_nn=='k' or args.est_param_nn=='k_true':
+            # Approximate permeability, k, with NN
+            
             alpha_indices = multi_indices(ndim=kl_trunc, poly_deg=poly_deg, order='total_degree')
             #n_samples = 150#k.shape[0]#20
             x_in = np.repeat(xgrid[np.newaxis,:], repeats=n_samples, axis=0)
-            # TODO: delete (this is just to test if mean k can be estimated)
-            #k = np.repeat(k.mean(axis=0)[np.newaxis,:],repeats=n_samples, axis=0) # Samples
-            #k = np.repeat(np.exp(np.ones(n_grid))[np.newaxis,:],repeats=n_samples, axis=0) # Ground truth sample mean
-            #k = np.repeat(k_true[np.newaxis,:],repeats=n_samples, axis=0) # Observations
-            alpha_indices = alpha_indices[:,4:] # Omit constant pce coefficient
+            
+            # Approximate k measurements
+            if args.est_param_nn=='k_true':
+                k = np.repeat(k_true[np.newaxis,:],repeats=n_samples, axis=0) # Observations
+            #alpha_indices = alpha_indices[:,4:] # Omit constant pce coefficient
             pce_coefs, ks_nn = get_param_nn(xgrid=x_in, y=k, target_name=args.est_param_nn, alpha_indices=alpha_indices, 
                 batch_size=1000, n_epochs=20, n_test_samples=n_samples, plot=True)
             if True:
-                plot_k_vs_ks_nn(k, ks_nn)
+                plotting.plot_k_vs_ks_nn(xgrid, k, ks_nn)
             # Compute log-permeability
             ys_nn = np.log(np.where(ks_nn>0, ks_nn, 1.))
+
             # Compute solution
             us_nn = np.zeros((n_samples, n_grid))
             for n in range(n_samples):
-                if args.pset2:
-                    flux_sample = np.random.normal(mu_f, var_f, 1)
-                us_nn[n,:] = stochDiffEq.diffusioneqn(xgrid, F=flux_sample, k=ks_nn[n,:], source=source, rightbc=rightbc)[:,0]
+                us_nn[n,:] = stochDiffEq.diffusioneqn(xgrid, F=flux(), k=ks_nn[n,:], source=source, rightbc=rightbc)[:,0]
 
             k = ks_nn
             y = ys_nn
             u = us_nn
+
+    import pdb;pdb.set_trace()
     # Plot k
-    plot_k(xgrid=xgrid, k=k, k_true=k_true, y_gp_mean=y_gp_mean, y_gp_cov=y_gp_cov)
-    if args.mcmc:
-        plot_accept_rates(accept_rates)
+    plotting.plot_k(xgrid=xgrid, k=k, k_true=k_true, y_gp_mean=y_gp_mean, y_gp_cov=y_gp_cov)
 
     # Compute ground-truth solution with given, k
     if args.inverse_problem:
-        u_true = stochDiffEq.diffusioneqn(xgrid, F=flux, k=k_true, source=source, rightbc=rightbc)[:,0]
+        u_true = stochDiffEq.diffusioneqn(xgrid, F=flux(), k=k_true, source=source, rightbc=rightbc)[:,0]
     else:
         u_true = None
 
     if args.eval_trunc_err: 
-        plot_trunc_err(truncs, trunc_errs)
+        plotting.plot_trunc_err(truncs, trunc_errs)
 
-    x = 0.0
-    x_id = np.abs(x_obs - x).argmin()
-    u_at_x = u[:, x_id]
+    at_x = 0.0
+    x_id = np.abs(x_obs - at_x).argmin()
+    u_at_x = u[:,x_id]
+    u_stats_at_x = calc_stats(u=u_at_x)
 
-    # Calculate estimated sample mean at each sampling iteration
-    #ux_cum_mean = np.divide(np.cumsum(ux)*np.ones(ux.shape[0]), np.arange(ux.shape[0], dtype=float)+1)
-    #ux_cum_mean = np.asarray([np.mean(ux[:n]) for n in range(n_samples)])
-    # Calculate estimated standard deviation of the estimated mean at each sampling iteration 
-    #ux_cum_std = np.asarray([np.std(ux_cum_mean[:n+1]) for n in range(n_samples)]) 
-
-    # Calculate statistics
-    ux_cum_mean = np.zeros((n_samples))
-    ux_cum_std = np.zeros((n_samples))
-    ux_cum_sem = np.zeros((n_samples))
-    ux_cum_var = np.zeros((n_samples))
-    conf_bnds = 0.95
-    ux_conf_int = np.zeros((n_samples, 2))
-    for n in range(n_samples):
-        ux_cum_mean[n] = np.mean(u_at_x[:n+1])
-        ux_cum_std[n] = np.std(u_at_x[:n+1], ddof=1) # Use n-1 in denominator for unbiased estimate. 
-        ux_cum_sem[n] = st.sem(u_at_x[:n+1])
-        ux_cum_var[n] = np.var(u_at_x[:n+1])
-        if n>0:
-            ux_conf_int[n,:] = st.t.interval(conf_bnds, n-1, loc=ux_cum_mean[n], scale=st.sem(u_at_x[:n+1]))
-
-    """                        
-    for n in range(n_samples):
-        est_n = ux_cum_mean[:n+1]
-        #if n==0:
-        #    ux_conf_int[n,:] = np.array([ux_cum_mean[:n+1], ux_cum_mean[:n+1]])[0]
-        #else:
-        ux_conf_int[n,:] = st.t.interval(conf_bnds, est_n.shape[0]-1, loc=np.mean(est_n), scale=st.sem(est_n))
-    """
     #print('ux_con', ux_conf_int)
     #print(f'u(x={x}, w) = {ux}')
     print('plot')
-    stochDiffEq.plot_sol(xgrid, u, u_at_x, ux_cum_mean, ux_cum_std, ux_cum_sem, ux_conf_int, ux_cum_var, x, 
+    plotting.plot_sol(xgrid, u, u_at_x, u_stats_at_x, at_x, 
         xgrid, u_true)

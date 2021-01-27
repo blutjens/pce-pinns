@@ -13,6 +13,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 
+import src.plotting as plotting
+
 # Sources: https://towardsdatascience.com/pytorch-tabular-regression-428e9c9ac93
 
 class RegressionDataset(Dataset):
@@ -49,9 +51,9 @@ def init_dataloader(X, y, batch_size, test_size=0.1, val_size=0.1):
 
     return train_loader, val_loader, test_loader
 
-class MultipleRegression(nn.Module):
+class FCNN(nn.Module):
     def __init__(self, n_features, n_out):
-        super(MultipleRegression, self).__init__()
+        super(FCNN, self).__init__()
         
         self.layer_1 = nn.Linear(n_features, 16)
         self.layer_2 = nn.Linear(16, 32)
@@ -204,7 +206,7 @@ def train(model, train_loader, optimizer, criterion, n_epochs, device, loss_stat
         print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f}')
 
     if plot: 
-        plot_train_curve(loss_stats)
+        plotting.plot_train_curve(loss_stats)
 
     return model, loss_stats
 
@@ -223,7 +225,7 @@ def predict(model, x_test, device, target_name='pce_coefs',
         y_test = model.predict(x_test_batch)
     if plot: 
         # Plot pce_coefs
-        plot_nn_pred(x=x_test_batch.cpu().numpy(), y=y_test.cpu().numpy())
+        plotting.plot_nn_pred(x=x_test_batch.cpu().numpy(), y=y_test.cpu().numpy())
     if target_name == 'k':
         # Sample param k, given learned deterministic pce_coefs
         k_samples = torch.zeros((n_test_samples, x_test.shape[0]))
@@ -231,45 +233,8 @@ def predict(model, x_test, device, target_name='pce_coefs',
             k_samples[n,:] = sample_pce_torch(y_test, alpha_indices)[:,0]
         k_samples = k_samples.cpu().numpy()
         if plot:
-            plot_nn_k_samples(x_test[:,0], k_samples)
+            plotting.plot_nn_k_samples(x_test[:,0], k_samples)
     return y_test.cpu().numpy(), k_samples
-
-def plot_nn_k_samples(xgrid, k_samples):
-    plt.figure(figsize=(15,8))
-    n_samples = k_samples.shape[0]
-    k_mean = k_samples.mean(axis=0)
-    k_std = k_samples.std(axis=0)
-    plt.plot(xgrid, k_mean, label=r'$mathbf{E}_{\xi}[k]$')
-    plt.fill_between(xgrid,#range(u_mean.shape[0]),
-        k_mean + k_std, k_mean - k_std, 
-        alpha=0.3, color='blue',
-        label=r'$\mathbf{E}_\xi[k] \pm \sigma_n$')
-    plt.xlabel(r"location, $x$")
-    plt.ylabel(r"diffusion, $k$")
-    plt.legend()
-    plt.title(r'$k$')
-    plt.savefig('../final_project/figures/nn_k_samples.png')
-
-def plot_train_curve(loss_stats):
-    #train_val_loss_df = pd.DataFrame.from_dict(loss_stats).reset_index().melt(id_vars=['index']).rename(columns={"index":"epochs"})
-    plt.figure(figsize=(15,8))
-    plt.plot(np.arange(len(loss_stats['train']))+1, loss_stats['train'])
-    plt.yscale('log')
-    plt.xlabel("epochs")
-    plt.ylabel("loss")
-    plt.title('Loss/Epoch')
-    plt.savefig('../final_project/figures/train_val_loss.png')
-
-def plot_nn_pred(x, y):
-    plt.figure(figsize=(15,8))
-    n_out = y.shape[1]
-    for i in range(n_out):
-        plt.plot(x, y[:,i], label=r'$C_{\alpha}$, '+str(i))
-    plt.xlabel(r"location, $x$")
-    plt.ylabel(r"$\hat C_\alpha(x)$")
-    plt.legend()
-    plt.title('PCE coefs')
-    plt.savefig('../final_project/figures/nn_pce_coefs.png')
 
 def get_param_nn(xgrid, y,
         n_epochs=30, batch_size=30,
@@ -311,7 +276,7 @@ def get_param_nn(xgrid, y,
 
     train_loader, val_loader, test_loader = init_dataloader(x, y, batch_size, test_size=0., val_size=0.)
 
-    model = MultipleRegression(n_features, n_out=n_out)
+    model = FCNN(n_features, n_out=n_out)
     model.to(device)
     print(model)
     if target_name == 'pce_coefs':
