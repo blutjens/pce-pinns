@@ -15,6 +15,7 @@ conda create --name pce-pinns python==3.8.5 pytorch==1.7.1 cudatoolkit==11.0 pan
 conda activate eie-lu-seg
 # Train NN to learn polynomial coefficients of deg. 3 
 python main.py --rand_flux_bc --pce --nn_pce --poly_deg 3 --n_samples 1000 --path_load_simdata pce_1k.pickle --est_param_nn k
+python main.py --rand_flux_bc --pce --nn_pce --poly_deg 3 --n_samples 8 --est_param_nn k_true        
 ```
 
 # References 

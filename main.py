@@ -1,4 +1,5 @@
 import numpy as np 
+from numpy.random import default_rng  
 import matplotlib.pyplot as plt
 import pickle # For data storage
 import argparse
@@ -49,6 +50,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
     Y np.array(n_grid): stochastic process 
     trunc_err float: truncation error    
     kl_fn (fn(np.array((n_grid,trunc))): Function to quickly query KL-expansion for new z  
+    z np.array(trunc): used random instances of KL expansion
     '''
     # Compute covariance eigenvalues and truncate
     eigvals, eigvecs = np.linalg.eig(cov) # eig s are returned sorted 
@@ -68,8 +70,8 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
 
         y_sample = mu_y + np.matmul(np.multiply(eigvecs[:,:kl_trunc], z), np.sqrt(eigvals[:trunc]))
         exp_y_sample = np.exp(y_sample)
-        return y_sample, exp_y_sample
-    Y, exp_Y = sample_kl()
+        return y_sample, exp_y_sample, z
+    Y, exp_Y, z = sample_kl()
     #kl_fn = lambda z_vec: mu_y + np.matmul(np.multiply(eigvecs_major, z_vec), np.sqrt(eigvals_major))
 
     # Compute new stochastic process at z
@@ -108,7 +110,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
         for n in range(n_samples_plt):
             #z_plt = np.repeat(np.random.normal(0., 1., trunc)[np.newaxis,:], repeats=n_grid, axis=0)
             #Y_plt[n,:] = kl_fn(z_plt) 
-            Y_plt[n,:],_ = sample_kl()
+            Y_plt[n,:], _, _ = sample_kl()
         Y_plt_mean = Y_plt.mean(axis=0)
         Y_plt_var = Y_plt.var(axis=0)
         plt.plot(xgrid, Y_plt_mean,color='blue')
@@ -119,7 +121,7 @@ def kl_expansion(xgrid, mu_y, cov, trunc=3, z_candidate=None, plot=True):
         plt.savefig('doc/figures/kl_exp_log_perm.png')
         plt.close()
         
-    return Y, exp_Y, trunc_err, eigvals_major, eigvecs_major, sample_kl
+    return Y, exp_Y, trunc_err, eigvals_major, eigvecs_major, z, sample_kl
 
 def init_gaussian_process(xgrid, y_mean, y_var, lengthscale=0.3, order=1.):
     """
@@ -164,17 +166,18 @@ def sample_low_dim_gaussian_process(xgrid,
     exp_Y np.array(n_grid): sample of low dim exp-gaussian process
     trunc_err (float): truncation error 
     coefs np.array((n_grid, poly_deg)):  polynomial chaos expansion coefficients 
+    rand_insts np.array(trunc or poly_deg): random instances used in expansion 
     '''
     n_grid = xgrid.shape[0]
     # Compute expansion
-    Y, exp_Y, trunc_err_kl, kl_eigvals, kl_eigvecs, sampling_fn = kl_expansion(xgrid, mu_y, cov, trunc, z_candidate=z_candidate)
+    Y, exp_Y, trunc_err_kl, kl_eigvals, kl_eigvecs, rand_insts, sampling_fn = kl_expansion(xgrid, mu_y, cov, trunc, z_candidate=z_candidate)
     if expansion == 'KL':
         trunc_err = trunc_err_kl
     elif expansion == 'polynomial_chaos':
-        Y, exp_Y, trunc_err, coefs, sampling_fn = polynomial_chaos_expansion(xgrid, 
+        Y, exp_Y, trunc_err, coefs, rand_insts, sampling_fn = polynomial_chaos_expansion(xgrid, 
             kl_trunc=trunc, kl_mu_y=mu_y, kl_eigvals=kl_eigvals, kl_eigvecs=kl_eigvecs,
             poly_deg=trunc, plot=plot, c_alphas=pce_coefs)
-    return Y, exp_Y, trunc_err, coefs, sampling_fn
+    return Y, exp_Y, trunc_err, coefs, rand_insts, sampling_fn
 
 def gauss_hermite(x, deg, verbose=False):
     """
@@ -283,112 +286,6 @@ def one_d_gauss_herm_pce_nominator(h, alpha):
     nominator = trapezoid_int(integrand, 0.001, 1-0.001, 1000)
     return nominator * np.sqrt(2*np.pi)
 
-def get_pce_coefs(poly_deg, xgrid=None, 
-    Y_hat=None, kl_trunc=10, kl_mu_y=None, kl_eigvals=None, kl_eigvecs=None,
-    Y_inv_cdf=None, plot=True, mc_integration=False):
-    """
-    WRONG! Computes the full tensor PCE coefficients with Gaussian-Hermite polynomials 
-    Adapted from: Emily Gorcenski - Polynomial Chaos: A technique for modeling uncertainty; url=https://youtu.be/Z-Qio-n6yPc; 
-    Input:
-    poly_deg (int): Target polynomial degree truncation
-    xgrid (np.array((n_grid))): Grid points of Y_hat in spatial domain 
-    Y_hat (fn(np.array(n_grid, kl_trunc))): Function that approximates the target function at all x, as function of Gaussian noise, e.g., the KL-expansion
-    Y_inv_cdf (fn): Inverse CDF of target distribution. This is an alternative input to Y_hat, that only works with constant Y.
-    mc_integration (bool): Use Monte Carlo Integration (don't use!)
-    Output:
-    c_alpha (np.array(n_grid, poly_deg)): PCE coefficients
-    """
-    test = False # Use this to make code look like Emily's example
-    test2 = True # Use this to make code look like plots reported in proj2
-
-    # Initialize output coefficients
-    n_grid = xgrid.shape[0]
-    c_alphas = np.zeros((n_grid, poly_deg))
-
-    # Set up Gauss-Hermite quadrature for integration in denominatory
-    n_quad_pts = poly_deg**2#poly_deg**2 # number of sample points. Shouldn't this be \sqrt(poly_deg-1)?
-    xi, w = H.hermegauss(n_quad_pts) # Get points and weights of Gauss-Hermite quadrature.
-
-    if kl_eigvals is not None:
-        pass
-    else:
-        for alpha in range(0,poly_deg): # Change this to do sth else than full-tensor truncation
-            # Compute the nominator/integral
-            if mc_integration:
-                n_mc = 1000
-                np.random.sample             
-                print('poly deg', poly_deg)
-                print('kl trunc', kl_trunc)
-                H_alpha_mc = np.zeros((n_mc))
-                Y_alpha_mc = np.zeros((n_mc, n_grid))
-                Y_alpha_mc_int = np.zeros(n_grid)
-                for n in range(n_mc):
-                    xi_mc = np.random.normal(0,1)
-                    H_alpha_mc[n] = H.hermeval(xi_mc, Herm(alpha))
-                    z_kl = np.repeat(np.random.normal(0,1, kl_trunc)[np.newaxis,:],repeats=n_grid,axis=0)
-                    Y_alpha_mc[n,:] = Y_hat(z_kl) * H_alpha_mc[n]
-                    Y_alpha_mc_int[:] += Y_alpha_mc[n,:]
-                Y_alpha_mc_int = 1./float(n_mc) * Y_alpha_mc_int
-                nominator = Y_alpha_mc_int
-                print('nominator', alpha, nominator)
-                import pdb;pdb.set_trace
-            elif Y_hat is not None:
-                # Integrate target fn with gauss-hermite quadrature rule
-                # TODO: Feed in distribution of Y_hat as it's stochastic in the case of the KL expansion.
-                # TODO: check if i need scaling term np.sqrt(2*np.pi)
-                # TODO: should Y_hat be independent of xi
-                herm_sum = np.zeros((n_grid)) # []
-                for idx in range(n_quad_pts):
-                    #z_kl = xi[idx] * np.ones((n_grid, kl_trunc))
-                    #! Gaussian quadrature integration with KL-expansion doesn't make sense, bc KL has more than 
-                    #   one stochastic dimension!
-                    z_kl = np.repeat(np.random.normal(0,1, kl_trunc)[np.newaxis,:],repeats=n_grid,axis=0)
-                    #z_kl = np.repeat(np.random.normal(xi[idx],1, kl_trunc)[np.newaxis,:],repeats=n_grid,axis=0)
-                    #print('shape ykl, h, w', Y_hat(z_kl).shape, H.hermeval(xi[idx], Herm(alpha)).shape, w[idx].shape)
-                    #print('shape ykl, h, w', Y_hat(z_kl).shape, H.hermeval(xi[idx], Herm(alpha)), w[idx])
-                    #import pdb;pdb.set_trace()
-                    herm_sum += Y_hat(z_kl) * H.hermeval(xi[idx], Herm(alpha)) * w[idx]
-                #nominator = Y_hat * herm_sum 
-                nominator = herm_sum
-                #print('nominator', alpha, nominator)
-                #nominator = Y_hat[z_init = xi] * Herm(xi) * w
-                #nominator = Y_hat * sum([H.hermeval(xi[idx], Herm(alpha)) * w[idx] for idx in range(n_quad_pts)])
-            elif Y_inv_cdf is not None:
-                nominator = one_d_gauss_herm_pce_nominator(Y_inv_cdf)
-            else:
-                return NotImplementedError()
-            
-            # Compute denominator with Gauss-Hermite quadrature rule for integration
-            if test2: 
-                herm_norm = 0
-                for idx in range(n_quad_pts):
-                    herm_norm += herm_inner_product_at_x(Herm(alpha), Herm(alpha))(xi[idx]) * w[idx]
-                denominator = herm_norm
-            else:
-                # TODO: this is only valid for 1-dimensional hermite polynomials, i.e., if we're estimating
-                #  1 random variable. Derive formula for the multivariate case.
-                denominator = np.math.factorial(alpha)
-            
-            c_alphas[:,alpha] = nominator / denominator
-
-    if plot:
-        # Plot hermite basis polynomials
-        fig = plt.figure(figsize=(9,5))
-        for alpha in range(poly_deg): # Change this to do sth else than full-tensor truncation
-            h_x = np.zeros((n_quad_pts))
-            for idx in range(n_quad_pts):
-                h_x[idx] = H.hermeval(xi[idx], Herm(alpha)) #* w[idx]
-            plt.plot(xi, h_x, label=r'$H_{\alpha='+str(alpha)+'}$')
-        plt.xlabel(r'location, $x$')
-        plt.ylabel(r'polynomial, $\psi_\alpha(x)$')
-        plt.xlim((-3,6))
-        plt.ylim((-10,20))
-        plt.tight_layout()
-        plt.legend()
-        plt.savefig('doc/figures/hermite_poly_Herm.png')
-
-    return c_alphas
-
 def get_pce_coef(alpha_vec, mu_y, eigvals, eigvecs, verbose=True):
     """
     Calculates the PCE coefficient for a specific combination of polynomial degrees, alpha
@@ -456,7 +353,8 @@ def polynomial_chaos_expansion(xgrids,
     plot (boolean): if true, plots various quantities of interest
     Output:
     exp_Y np.array(n1_grid,n2_grid): exponential of approximated stochastic process, exp(Y)
-    c_alphas (np.array(n_grid, poly_deg)): PCE coefficients
+    c_alphas (np.array(n_grid, n_alpha_indices)): PCE coefficients
+    xi np.array(ndim): Random instances used to sample the PCE  
     """
     log = {}
     if len(xgrids.shape)==1:
@@ -479,18 +377,29 @@ def polynomial_chaos_expansion(xgrids,
     trunc_err = 0.
 
     # Draw a sample from the PCE with given PCE coefficients
+    ## TODO!! --> pass random state argument here.
     def sample_pce():
+        """
+        Function that samples the PCE with given PCE coefficents 
+        Input:
+        rng numpy.random.default_rng: Random number generator, can be used to equalize seeds. 
+        """
         exp_y_pce = np.zeros(n_grid)
-        xi = np.random.normal(0,1,ndim) # one random variable per stochastic dimension
+
+        # Sample one random variable per stochastic dimension
+        xi = np.random.normal(0,1,ndim)
         for a, alpha_vec in enumerate(alpha_indices):
             herm_alpha = np.zeros(ndim)
+            # Evaluate Gaussian-Hermite basis polynomials of degree alpha_i at sampled position
             for idx, alpha_i in enumerate(alpha_vec):
                 herm_alpha[idx] = H.hermeval(xi[idx], Herm(alpha_i)) # dim: ndim
+            # Linear combination of PCE coefs, c, with product of basis polynomials
             exp_y_pce += c_alphas[:,a] * np.prod(herm_alpha) # dim: n_grid
         y_pce = np.log(np.where(exp_y_pce>0, exp_y_pce, 1.))
+        #print('PCE rand smpl xi, k', xi, exp_y_pce[0])
 
-        return y_pce, exp_y_pce, trunc_err, c_alphas
-    y_pce, exp_y_pce, trunc_err, c_alphas = sample_pce()
+        return y_pce, exp_y_pce, trunc_err, c_alphas, xi # TODO return XI
+    y_pce, exp_y_pce, trunc_err, c_alphas, xi = sample_pce()
 
 
     if plot:
@@ -534,7 +443,7 @@ def polynomial_chaos_expansion(xgrids,
             #    for idx, alpha_i in enumerate(alpha_vec):
             #        herm_alpha[idx] = H.hermeval(xi[idx], Herm(alpha_i))
             #    exp_Y_plt[n,:] += c_alphas[:,a] * np.prod(herm_alpha)
-            _, exp_Y_plt[n,:], _, _ = sample_pce()
+            _, exp_Y_plt[n,:], _, _, _ = sample_pce()
 
         exp_Y_plt_mean = exp_Y_plt.mean(axis=0)
         exp_Y_plt_std = exp_Y_plt.std(axis=0)
@@ -556,7 +465,7 @@ def polynomial_chaos_expansion(xgrids,
         plt.savefig('doc/figures/pce_coefs.png')
         plt.close()
 
-    return y_pce, exp_y_pce, trunc_err, c_alphas, sample_pce
+    return y_pce, exp_y_pce, trunc_err, c_alphas, xi, sample_pce
 
 # PSET 3: inverse problem
 def get_msmts(plot=False):
@@ -682,25 +591,27 @@ def get_sol_w_gp_prior(xgrid,
     Computes a solution of the stochastic elliptic equation given all parameters
     Inputs: 
     x_obs (np.array(n_msmts)): if not None, only values at xobs are returned
-    sample_y function(): Function that draws samples of log-permeability, Y
+    sample_y function(numpy.random.default_rng)->y,exp_y,trunc_err,coefs: 
+        Function that draws samples of log-permeability, Y
     flux function()->float: Function that returns flux; could be stochastic or deterministic  
     
     Outputs:
     u_obs (np.array(n_msmts)): solution, u, at measurement locations
-    vals (dict()): Dictionary of model results, e.g., Y, exp_Y, u, trunc_err, coefs, 
+    vals (dict()): Dictionary of model results, e.g., Y, exp_Y, u, trunc_err, coefs, rand_insts
     sample_y fn(): Function that samples log-permeability, y
+    rng_sample_y np.random.default_rng: Random number generator for reproducibility of sample_y 
     """
     vals = {}
     # Sample stochastic log-permeability
     if sample_y is None:
         # Assume log-permeability is gaussian process
-        vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'], sample_y = sample_low_dim_gaussian_process(xgrid, 
+        vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'], vals['rand_insts'], sample_y = sample_low_dim_gaussian_process(xgrid, 
             mu_y=y_gp_mean, cov=y_gp_cov,
             trunc=trunc, expansion=expansion, z_candidate=z_candidate, 
             poly_deg=poly_deg, pce_coefs=pce_coefs)
     else:
         # Sample log-permeability with given fn
-        vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'] = sample_y()
+        vals['Y'], vals['exp_Y'], vals['trunc_err'], vals['coefs'], vals['rand_insts'] = sample_y()
     # Compute permeability
     vals['k'] = vals['exp_Y'] # np.exp(vals['Y']) 
     # Compute solution
@@ -885,9 +796,10 @@ def parse_logs(logs):
     Y = np.zeros((n_samples_after_warmup, n_grid))
     k = np.zeros((n_samples_after_warmup, n_grid))
     trunc_errs = np.empty((n_samples_after_warmup,1))
-    stoch_dim = logs[0]['coefs'].shape[-1]
-    coefs = np.empty((n_samples_after_warmup, n_grid, stoch_dim))
-
+    n_stoch_disc = logs[0]['coefs'].shape[-1] # e.g., n_alpha_indices for PCE, or kl_trunc for KL-E
+    coefs = np.empty((n_samples_after_warmup, n_grid, n_stoch_disc))
+    stoch_dim = logs[0]['rand_insts'].shape[-1]
+    rand_insts = np.empty((n_samples_after_warmup, stoch_dim))
     # Copy logs into params
     for n, log in enumerate(logs):
         k[n,:] = log['k']
@@ -895,7 +807,8 @@ def parse_logs(logs):
         u[n,:] = log['u']
         trunc_errs[n,0] = log['trunc_err']
         coefs[n,:,:] = log['coefs']
-    return k, Y, u, trunc_errs, coefs
+        rand_insts[n,:] = log['rand_insts']
+    return k, Y, u, trunc_errs, coefs, rand_insts
 
 def init_preprocessing(fn, parallel=False):
     """
@@ -988,16 +901,16 @@ def get_n_model_samples(model=get_sol_w_gp_prior, model_args={},
             logs = pickle.load(handle)            
     else:
         # if args.parallel: 
-        #    model_r, model_tasks = init_preprocessing(fn=get_sol_w_gp_prior, parallel=True)
-
-        # Sample solution
-        logs = n_samples * [None]
+        #    model_r, model_tasks = init_preprocessing(fn=model, parallel=True)
+        logs = n_samples*[None]
+        # Compute approximation, e.g., PCE, to sample_y
+        _, _, model_args['sample_y'] = model(**model_args)
+        # Generate samples
         for n in range(n_samples):
-            if n%10==0: 
-                print('n', n)
+            if n%10==0: print('n', n)
             # Sample solution
-            _, logs[n], model_args['sample_y'] = get_sol_w_gp_prior(**model_args)
-                            
+            _, logs[n], _ = model(**model_args)
+
         # Parse parallel tasks
         # model_tasks = get_parallel_fn(model_tasks)
         # for n in range(n_samples):
@@ -1142,7 +1055,7 @@ if __name__ == "__main__":
         logs = get_n_model_samples(model=get_sol_w_gp_prior, model_args=model_args, 
             n_samples=n_samples, path_load_simdata=args.path_load_simdata)
 
-    k, Y, u, trunc_errs, coefs = parse_logs(logs)
+    k, Y, u, trunc_errs, coefs, rand_insts = parse_logs(logs)
     # TODO: remove the following line; just for testing
     plotting.plot_k(xgrid=xgrid, k=k, k_true=k_true, y_gp_mean=y_gp_mean, y_gp_cov=y_gp_cov)
 
@@ -1152,10 +1065,11 @@ if __name__ == "__main__":
         if args.est_param_nn=='pce_coefs':
             # Approximate PCE coefficients with neural network
 
-            coefs_nn,_ = get_param_nn(xgrid, coefs[0,:,:], n_epochs=30, target_name=args.est_param_nn, plot=True)
+            coefs_nn,_ = get_param_nn(xgrid, coefs[0,:,:], n_epochs=20, 
+                target_name=args.est_param_nn, plot=True)
 
             # Get PCE sampling function with given neural net coefs
-            _, _, _, _, sample_pce_nn_coefs = sample_low_dim_gaussian_process(xgrid, 
+            _, _, _, _, _,sample_pce_nn_coefs = sample_low_dim_gaussian_process(xgrid, 
                 mu_y=y_gp_mean, cov=y_gp_cov,
                 trunc=kl_trunc, expansion='polynomial_chaos', z_candidate=None, 
                 poly_deg=poly_deg, pce_coefs=coefs_nn)
@@ -1168,7 +1082,7 @@ if __name__ == "__main__":
             for n in range(n_samples):
                 u_ests, logs[n], _ = get_sol_w_gp_prior(**model_args)
                 
-            k, Y, u, _, _ = parse_logs(logs)
+            k, Y, u, _, _, _ = parse_logs(logs)
 
         elif args.est_param_nn=='k' or args.est_param_nn=='k_true':
             # Approximate permeability, k, with NN
@@ -1181,8 +1095,10 @@ if __name__ == "__main__":
             if args.est_param_nn=='k_true':
                 k = np.repeat(k_true[np.newaxis,:],repeats=n_samples, axis=0) # Observations
             #alpha_indices = alpha_indices[:,4:] # Omit constant pce coefficient
-            pce_coefs, ks_nn = get_param_nn(xgrid=x_in, y=k, target_name=args.est_param_nn, alpha_indices=alpha_indices, 
-                batch_size=1000, n_epochs=20, n_test_samples=n_samples, plot=True)
+            # TODO: TEST IF BATCH SIZE CAN BE > n_grid
+            pce_coefs, ks_nn = get_param_nn(xgrid=x_in, y=k, target_name=args.est_param_nn, 
+                alpha_indices=alpha_indices, rand_insts=rand_insts,
+                batch_size=151, n_epochs=100, n_test_samples=n_samples, plot=True)
             if True:
                 plotting.plot_k_vs_ks_nn(xgrid, k, ks_nn)
             # Compute log-permeability
