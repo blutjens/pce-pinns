@@ -4,15 +4,14 @@
 This repository implements a physics-informed neural network (PINN) to learn the diffusion parameter in a 1D stochastic elliptic equation. The use-case is heavily based on Lütjens et al., 2020 and methodology is heavily based on Zhang et al., 2019. 
 
 # Installation
-## Environment
-- tested on Ubuntu 18.04
+## Environment 
 ```
-conda create --name pce-pinns python==3.8.5 pytorch==1.7.1 cudatoolkit==11.0 pandas==1.2.1 scikit-learn==0.23.2 matplotlib==3.3.2 tqdm 4.55.1
+conda env create -f environment.yml # tested on Ubuntu 18.04
 ```
 
 ## Run
 ```
-conda activate eie-lu-seg
+conda activate pce-pinns
 # Train NN to learn polynomial coefficients of deg. 3 
 python main.py --rand_flux_bc --pce --nn_pce --poly_deg 3 --n_samples 1000 --path_load_simdata pce_1k.pickle --est_param_nn k
 python main.py --rand_flux_bc --pce --nn_pce --poly_deg 3 --n_samples 8 --est_param_nn k_true        
