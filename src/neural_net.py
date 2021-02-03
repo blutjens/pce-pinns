@@ -1,3 +1,8 @@
+"""
+Neural network
+Author: Björn Lütjens (lutjens@mit.edu)
+"""
+
 import numpy as np
 import pandas as pd
 #import seaborn as sns
@@ -13,9 +18,8 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 
-import src.plotting as plotting
-
-# Sources: https://towardsdatascience.com/pytorch-tabular-regression-428e9c9ac93
+import src.utils.plotting as plotting
+import src.rom.pce as pce
 
 class RegressionDataset(Dataset):
     def __init__(self, X_data, y_data):
@@ -30,8 +34,8 @@ class RegressionDataset(Dataset):
 
 def init_dataloader(X, y, batch_size, test_size=0.1, val_size=0.1, shuffle=False):
     """
-    Inputs:
-    shuffle bool: if True, shuffles dataset. The option is not true, s.t., the rand instance in train and test can be correlated
+    Args:
+        shuffle bool: If True, shuffles dataset. The option is not true, s.t., the rand instance in train and test can be correlated
     """
     if test_size > 0 and val_size > 0:
         # Train - Test
@@ -56,6 +60,8 @@ def init_dataloader(X, y, batch_size, test_size=0.1, val_size=0.1, shuffle=False
     return train_loader, val_loader, test_loader
 
 class FCNN(nn.Module):
+    # Source: https://towardsdatascience.com/pytorch-tabular-regression-428e9c9ac93
+    # TODO: replace with a beautiful NN
     def __init__(self, n_features, n_out):
         super(FCNN, self).__init__()
         
@@ -88,66 +94,15 @@ class FCNN(nn.Module):
         x = self.layer_out(x)
         return (x)
 
-# Define Hermite polynomial 
-import numpy.polynomial.hermite_e as H
-def Herm(p):
-    """
-    Return Hermite coefficients. Here, these are unit-vectors of degree p. 
-    """
-    coefs = [0] * (p+1)
-    coefs[p] = 1
-    return coefs
-
-def sample_pce_torch(pce_coefs, alpha_indices, rand_inst=None,verbose=True):
-    """
-    Draw a sample from the PCE with given PCE coefficients with using autograd
-    Note: batch_size can be replace with n_grid=1
-    Input:
-    pce_coefs torch.Tensor(batch_size, ndim): PCE coefficients
-    alpha_indices np.array(ndim,poly_deg): set of alpha indices
-    rand_inst np.array(batch_size, ndim): random instances used to reproduce same function between random instance and k (opt) 
-    Output:
-    exp_y_pce torch.Tensor(batch_size, 1): samples of the stochastic process, k=exp(y)=sum(pce_coefs*herm)
-    """
-
-    batch_size, n_alpha_indices = pce_coefs.size()
-    exp_y_pce = torch.zeros(batch_size) # np.zeros(batch_size)
-    ndim = alpha_indices.shape[1]
-    # Sample one random variable per stochastic dimension
-    # !! this currently assumes that all samples in batch are dependent, but the batches are independet!!
-    if rand_inst is None:
-        xi = np.random.normal(0,1,ndim) # one random variable per stochastic dimension
-        xi = np.repeat(xi[np.newaxis,:], repeats=batch_size, axis=0)
-    else:
-        xi = rand_inst
-        if verbose:
-            _, uniq_ids = np.unique(xi,axis=0,return_index=True)
-            #print('PCE NN rand smpl xi', xi[np.sort(uniq_ids),:])
-        
-    herm_alpha_vec = np.zeros((batch_size, alpha_indices.shape[0]))
-    # TODO: do all this in matrix multiplication!
-    for b in range(batch_size):
-        for a, alpha_vec in enumerate(alpha_indices):
-            # Evaluate Gauss-Hermite basis polynomials of degree alpha_i at sampled position
-            herm_alpha = np.zeros(ndim)#torch.zeros(ndim)#  
-            for idx, alpha_i in enumerate(alpha_vec):# in range(poly_deg):
-                herm_alpha[idx] = H.hermeval(xi[b, idx], Herm(alpha_i)) #dim: 1
-            herm_alpha_vec[b,a] = np.prod(herm_alpha[:])
-    # Linear combination of pce coefs gauss-hermite polynomial; in torch to enable autodiff
-    herm_alpha_vec = torch.from_numpy(herm_alpha_vec).type(torch.float32)
-    exp_y_pce = torch.diag(torch.matmul(pce_coefs[:,:],torch.transpose(herm_alpha_vec,0,1))) # dim: diag((batch_size x ndim) * (batch_size x ndim)^T)=(batch_size)
-
-    return exp_y_pce.unsqueeze(1)
-
 class MSELoss_k_pce(object):
     def __init__(self, alpha_indices,verbose=False, 
             omit_const_pce_coef=False,rand_insts=None):
         """
-        Input:
-        alpha_indices np.array(poly_deg, n_alpha_indices)
-        verbose bool: if true, created verbose prints
-        omit_const_pce_coef bool: if true, removes PCE coefficients of zero-th order.
-        rand_insts np.array(n_grid*n_samples, n_stoch_dim): random instances, corresponding to the training set; (opt)
+        Args:
+            alpha_indices np.array(pce_dim, n_alpha_indices)
+            verbose bool: If true, created verbose prints
+            omit_const_pce_coef bool: If true, removes PCE coefficients of zero-th order.
+            rand_insts np.array(n_grid*n_samples, n_stoch_dim): Random instances, corresponding to the training set; (opt)
         """
         self.alpha_indices=alpha_indices
         self.verbose=verbose
@@ -158,12 +113,12 @@ class MSELoss_k_pce(object):
         self.iter = 0
     def __call__(self, pce_coefs, k_target):
         """
-        Input:
-        pce_coefs np.array(n_grid, n_alpha_indices)
-        k_target np.array(n_grid, 1)
+        Args:
+            pce_coefs np.array(n_grid, n_alpha_indices)
+            k_target np.array(n_grid, 1)
         """
         # !!!TODO!!! rand_inst need to be shape of (n_batches, batch_size, ndim) 
-        k_pred = sample_pce_torch(pce_coefs, self.alpha_indices, rand_inst=self.rand_inst)
+        k_pred = pce.sample_pce_torch(pce_coefs, self.alpha_indices, rand_inst=self.rand_inst)
         #k_pred = torch.mean(pce_coefs,axis=1)
         mse_loss_k_pce = torch.mean((k_pred - k_target)**2)
         if self.verbose: print('k: mse, pred, target', mse_loss_k_pce, k_pred, k_target)
@@ -180,9 +135,9 @@ class MSELoss_k_pce(object):
 def train(model, train_loader, optimizer, criterion, n_epochs, device, loss_stats, plot=False, 
     custom_rand_inst=False, batch_size=None):
     """
-    Input:
-    custom_rand_inst bool: If true, the random instances of the NN-based model and training data are the same   
-    batch_size int: batch_size; only used t oset rand_inst
+    Args:
+        custom_rand_inst bool: If true, the random instances of the NN-based model and training data are the same   
+        batch_size int: Batch size; only used to set rand_inst
     """
     print("Begin training.")
     for e in tqdm(range(1, n_epochs+1)):
@@ -226,10 +181,12 @@ def train(model, train_loader, optimizer, criterion, n_epochs, device, loss_stat
 def predict(model, x_test, device, target_name='pce_coefs', 
     alpha_indices=None, n_test_samples=1, plot=False):
     """
-    x_test np.array((n_grid,1)): 
-    Output:
-    y_test np.array((n_grid, n_alpha_indices))
-    k_samples np.array((n_grid, n_samples))
+    Args:
+        x_test np.array((n_grid,1)): 
+
+    Returns:
+        y_test np.array((n_grid, n_alpha_indices))
+        k_samples np.array((n_grid, n_samples))
     """
     k_samples = None
     with torch.no_grad():
@@ -243,7 +200,7 @@ def predict(model, x_test, device, target_name='pce_coefs',
         # Sample param k, given learned deterministic pce_coefs
         k_samples = torch.zeros((n_test_samples, x_test.shape[0]))
         for n in range(n_test_samples):
-            k_samples[n,:] = sample_pce_torch(y_test, alpha_indices)[:,0]
+            k_samples[n,:] = pce.sample_pce_torch(y_test, alpha_indices)[:,0]
         k_samples = k_samples.cpu().numpy()
         if plot:
             plotting.plot_nn_k_samples(x_test[:,0], k_samples)
@@ -256,13 +213,14 @@ def get_param_nn(xgrid, y,
         alpha_indices=None, n_test_samples=1,
         plot=False, rand_insts=None):
     """
-    Input:
-    xgrid np.array(n_samples, n_grid,): location
-    y np.array(n_samples, n_grid, n_out): target, e.g., pce_coefs or k_target; n_out is stochastic dim, e.g., n_alpha_indices
-    target_name (string): indication which target
-    rand_insts np.array((n_samples, n_out)): random instances, used to generated training dataset
-    Output:
-    y_test np.array(n_grid,n_out)
+    Args:
+        xgrid np.array(n_samples, n_grid,): Location
+        y np.array(n_samples, n_grid, n_out): Target, e.g., pce_coefs or k_target; n_out is stochastic dim, e.g., n_alpha_indices
+        target_name (string): Indication which target
+        rand_insts np.array((n_samples, n_out)): Random instances, used to generated training dataset
+
+    Returns:
+        y_test np.array(n_grid,n_out)
     """
     # init cpu/gpu
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
