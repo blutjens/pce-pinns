@@ -1,5 +1,4 @@
 import numpy as np 
-import matplotlib.pyplot as plt
 import pickle # For data storage
 import argparse
 
@@ -216,7 +215,6 @@ def approx_model_param_w_nn(xgrid, diffeq, k_target, k_true,
 
     return ks_nn, ys_nn, us_nn
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='project 1-2')
     # Differential equation
@@ -328,7 +326,7 @@ if __name__ == "__main__":
     plotting.plot_k(xgrid=xgrid, k=k, k_true=k_true, y_gp_mean=y_gp_mean, y_gp_cov=y_gp_cov)
 
     # Plot solution of differential equation with given, k
-    u_true = stochDiffEq.diffusioneqn(xgrid, k=k_true)[:,0]
+    u_true = stochDiffEq.diffusioneqn(xgrid, k=k_true)[:,0] if args.est_param_nn=='k_true' else None
     at_x = 0.0
     u_at_x = utils.get_fn_at_x(xgrid=x_obs, fn=u, at_x=at_x)
     u_stats_at_x = densities.calc_stats(u=u_at_x)
