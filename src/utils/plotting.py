@@ -3,6 +3,7 @@ Accumulation of plotting functions
 """
 import numpy as np 
 import matplotlib.pyplot as plt
+from matplotlib import cm
 
 def plot_msmt(x_obs, xgrid, u_obs, k_true, Y_true):
     """ Plots the measurements
@@ -546,6 +547,64 @@ def plot_nn_pred(x, y):
     plt.title('PCE coefs')
     plt.savefig('doc/figures/nn_pce_coefs.png')
 
+def plot_mu_k_vs_ks_nn(xgrid, k, k_nn):
+    plt.figure(figsize=(15,8))
+    plt.plot(xgrid, k, color='green', linewidth=4, linestyle=':', label=r'KL target: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+    plt.plot(xgrid, k_nn, color='blue',label=r'Learned: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+    plt.xlabel(r"location, $x$")
+    plt.ylabel(r"diffusion, $k$")
+    plt.legend()
+    plt.title(r'$k$')
+    plt.savefig('doc/figures/nn_mu_k_nn.png')
+
+def plot_std_k_vs_ks_nn(xgrid, k, k_nn):
+    import pdb;pdb.set_trace()
+    plt.figure(figsize=(15,8))
+    plt.plot(xgrid, np.std(k, axis=0), color='green', linewidth=4, linestyle=':', label=r'KL target: $\sigma_k$')
+    plt.plot(xgrid, np.std(k_nn, axis=0), color='blue',label=r'Learned: $\hat\sigma_k$')
+    plt.xlabel(r"location, $x$")
+    plt.ylabel(r"std deviation, $\sigma_k$")
+    plt.legend()
+    plt.title(r'$\sigma_k$')
+    plt.savefig('doc/figures/nn_std_k_nn.png')
+
+def plot_k_eigvecs_vs_ks_nn(xgrid, k_eigvecs, k_eigvecs_nn):
+
+    plt.figure(figsize=(15,8))
+    kl_dim = k_eigvecs.shape[1]
+    colors = cm.get_cmap('tab20')
+    for p in range(kl_dim):
+        plt.plot(xgrid, k_eigvecs[:,p],color=colors.colors[2*p], linewidth=4, linestyle=':', label=r'Target: $\phi_{' + str(p) + '}$')
+        plt.plot(xgrid, k_eigvecs_nn[:,p], color=colors.colors[2*p+1], label=r'Learned: $\hat\phi_{' + str(p) + '}$')
+    plt.xlabel(r"location, $x$")
+    plt.ylabel(r"eigenvector, $\phi$")
+    plt.legend()
+    plt.title(r'eigenvector')
+    plt.savefig('doc/figures/k_eigvecs_nn.png')
+
+def plot_kl_k_vs_ks_nn(xgrid, k, k_samples_nn):
+    plt.figure(figsize=(15,8))
+    n_samples = k_samples_nn.shape[0]
+    k_samples_mean = k_samples_nn.mean(axis=0)
+    k_samples_std = k_samples_nn.std(axis=0)
+    plt.plot(xgrid, k_samples_mean, color='blue')#, label=r'$mathbf{E}_{\xi}[k]$')
+    plt.fill_between(xgrid,#range(u_mean.shape[0]),
+        k_samples_mean + k_samples_std, k_samples_mean - k_samples_std, 
+        alpha=0.3, color='blue',
+        label=r'Learned: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+    k_mean = k.mean(axis=0)
+    k_std = k.std(axis=0)
+    plt.plot(xgrid, k_mean, color='green')#, label=r'$mathbf{E}_{\xi}[k]$')
+    plt.fill_between(xgrid,#range(u_mean.shape[0]),
+        k_mean + k_std, k_mean - k_std, 
+        alpha=0.3, color='green',
+        label=r'KL target: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+    plt.xlabel(r"location, $x$")
+    plt.ylabel(r"diffusion, $k$")
+    plt.legend()
+    plt.title(r'$k$')
+    plt.savefig('doc/figures/nn_kl_k_samples.png')
+
 def plot_k_vs_ks_nn(xgrid, k, k_samples_nn):
     plt.figure(figsize=(15,8))
     n_samples = k_samples_nn.shape[0]
@@ -555,14 +614,14 @@ def plot_k_vs_ks_nn(xgrid, k, k_samples_nn):
     plt.fill_between(xgrid,#range(u_mean.shape[0]),
         k_samples_mean + k_samples_std, k_samples_mean - k_samples_std, 
         alpha=0.3, color='blue',
-        label=r'PCE target: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+        label=r'Learned: $\mathbf{E}_\xi[k] \pm \sigma_n$')
     k_mean = k.mean(axis=0)
     k_std = k.std(axis=0)
     plt.plot(xgrid, k_mean, color='green')#, label=r'$mathbf{E}_{\xi}[k]$')
     plt.fill_between(xgrid,#range(u_mean.shape[0]),
         k_mean + k_std, k_mean - k_std, 
         alpha=0.3, color='green',
-        label=r'Learned: $\mathbf{E}_\xi[k] \pm \sigma_n$')
+        label=r'PCE target: $\mathbf{E}_\xi[k] \pm \sigma_n$')
     plt.xlabel(r"location, $x$")
     plt.ylabel(r"diffusion, $k$")
     plt.legend()

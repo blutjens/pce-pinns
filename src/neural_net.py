@@ -60,38 +60,32 @@ def init_dataloader(X, y, batch_size, test_size=0.1, val_size=0.1, shuffle=False
     return train_loader, val_loader, test_loader
 
 class FCNN(nn.Module):
-    # Source: https://towardsdatascience.com/pytorch-tabular-regression-428e9c9ac93
-    # TODO: replace with a beautiful NN
+    # https://stackoverflow.com/questions/46141690/how-to-write-a-pytorch-sequential-model
     def __init__(self, n_features, n_out):
         super(FCNN, self).__init__()
         
-        self.layer_1 = nn.Linear(n_features, 16)
-        self.layer_2 = nn.Linear(16, 32)
-        self.layer_3 = nn.Linear(32, 64)
-        self.layer_4 = nn.Linear(64, 64)
-        self.layer_5 = nn.Linear(64, 32)
-        self.layer_6 = nn.Linear(32, 16)
-        self.layer_out = nn.Linear(16, n_out)
-        
-        self.relu = nn.ReLU()
+        n_layers = 2
+        n_units = 128 # number of hidden units
+        self.act = nn.ReLU#ReLU
+
+        layers = []
+        # Input layer
+        layers.append(nn.Linear(n_features, n_units))
+        layers.append(self.act())
+        # Hidden layers
+        for l in range(n_layers):
+            layers.append(nn.Linear(n_units, n_units))
+            layers.append(self.act())
+        # Output layer
+        layers.append(nn.Linear(n_units, n_out))
+        self.net = nn.Sequential(*layers)
+
     def predict(self, test_inputs):
-        x = self.relu(self.layer_1(test_inputs))
-        x = self.relu(self.layer_2(x))
-        x = self.relu(self.layer_3(x))
-        x = self.relu(self.layer_4(x))
-        x = self.relu(self.layer_5(x))
-        x = self.relu(self.layer_6(x))
-        x = self.layer_out(x)
+        x = self.net(test_inputs)
         return (x)
 
     def forward(self, inputs):
-        x = self.relu(self.layer_1(inputs))
-        x = self.relu(self.layer_2(x))
-        x = self.relu(self.layer_3(x))
-        x = self.relu(self.layer_4(x))
-        x = self.relu(self.layer_5(x))
-        x = self.relu(self.layer_6(x))
-        x = self.layer_out(x)
+        x = self.net(inputs)
         return (x)
 
 class MSELoss_k_pce(object):
@@ -148,7 +142,7 @@ def train(model, train_loader, optimizer, criterion, n_epochs, device, loss_stat
         model.train()
         i = 0
         for X_train_batch, y_train_batch in train_loader:
-            print('i-th batch:', i, y_train_batch[0])
+            #print('i-th batch:', i, y_train_batch[0])
             X_train_batch, y_train_batch = X_train_batch.to(device), y_train_batch.to(device)
             # Forward pass: Compute predicted y by passing x to the model    
             y_train_pred = model(X_train_batch)
@@ -171,7 +165,7 @@ def train(model, train_loader, optimizer, criterion, n_epochs, device, loss_stat
         
         loss_stats['train'].append(train_epoch_loss/len(train_loader))
         
-        print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.5f}')
+        print(f'Epoch {e+0:03}: | Train Loss: {train_epoch_loss/len(train_loader):.6f}')
 
     if plot: 
         plotting.plot_train_curve(loss_stats)
@@ -206,13 +200,14 @@ def predict(model, x_test, device, target_name='pce_coefs',
             plotting.plot_nn_k_samples(x_test[:,0], k_samples)
     return y_test.cpu().numpy(), k_samples
 
-def get_param_nn(xgrid, y,
+def interpolate_param_nn(xgrid, y,
         n_epochs=30, batch_size=30,
         lr=0.001, 
         target_name='pce_coefs', 
         alpha_indices=None, n_test_samples=1,
         plot=False, rand_insts=None):
     """
+    Train interpolating NN that predicts params, PCE coefs, or param eigenvecs 
     Args:
         xgrid np.array(n_samples, n_grid,): Location
         y np.array(n_samples, n_grid, n_out): Target, e.g., pce_coefs or k_target; n_out is stochastic dim, e.g., n_alpha_indices
@@ -242,8 +237,14 @@ def get_param_nn(xgrid, y,
         # Align the random instances with their samples
         if rand_insts is not None:
             rand_insts = np.repeat(rand_insts[:,:],repeats=xgrid.shape[1],axis=0)
+    elif target_name=='mu_k' or 'k_eigvecs':
+        # Merge n_samples and n_grid axes into one. Assumes that samples are iid. across location, x
+        x = xgrid.reshape(-1, 1)
+        n_out = y.shape[-1] 
+        y = y.reshape(-1, n_out) 
+        #import pdb;pdb.set_trace()
+        #plotting.plot_mu_k_vs_ks_nn(x[:,0], y[:,0], 3*np.ones(xgrid.shape[1]))
 
-    #y = coefs[0,:,:]
 
     n_epochs = n_epochs
     batch_size = batch_size # 64
@@ -255,7 +256,8 @@ def get_param_nn(xgrid, y,
     model = FCNN(n_features, n_out=n_out)
     model.to(device)
     print(model)
-    if target_name == 'pce_coefs':
+
+    if target_name == 'pce_coefs' or target_name == 'mu_k' or target_name == 'k_eigvecs':
         criterion = nn.MSELoss()
     elif target_name == 'k' or target_name=='k_true':
         criterion = MSELoss_k_pce(alpha_indices=alpha_indices, verbose=False, rand_insts=rand_insts)#, test_return_pce_coefs=False)
@@ -270,9 +272,13 @@ def get_param_nn(xgrid, y,
         loss_stats, plot=plot, custom_rand_inst=(rand_insts is not None), batch_size=batch_size)
 
     if target_name=='pce_coefs':
-        x_test=xgrid[:,np.newaxis]
+        x_test = xgrid[:,np.newaxis]
     elif target_name=='k' or target_name=='k_true':
-        x_test=xgrid[0,:,np.newaxis]
-    y_test, k_samples = predict(model, x_test, device=device, target_name=target_name, alpha_indices=alpha_indices, n_test_samples=n_test_samples, plot=plot)
+        x_test = xgrid[0,:,np.newaxis]
+    elif target_name=='mu_k' or target_name=='k_eigvecs':
+        x_test = xgrid.reshape(-1, 1)
+    y_test, k_samples = predict(model, x_test, device=device, 
+        target_name=target_name, alpha_indices=alpha_indices, 
+        n_test_samples=n_test_samples, plot=plot)
 
     return y_test, k_samples

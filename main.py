@@ -111,7 +111,7 @@ def sample_diffeq(diffeq, xgrid,
 
     return u_obs, vals, sample_y
  
-def get_n_model_samples(model=sample_diffeq, model_args={}, 
+def sample_model(model=sample_diffeq, model_args={}, 
     n_samples=2, 
     parallel=False,
     path_load_simdata=None, path_store_simdata='pce.pickle'):
@@ -161,7 +161,7 @@ def approx_pce_coefs_w_nn(xgrid, model, model_args,
     Approximate PCE coefficients with neural network
     """
 
-    coefs_nn, _ = get_param_nn(xgrid=xgrid, y=coefs_target[0,:,:], n_epochs=20, 
+    coefs_nn, _ = interpolate_param_nn(xgrid=xgrid, y=coefs_target[0,:,:], n_epochs=20, 
         target_name="pce_coefs", plot=plot)
 
     # Get PCE sampling function with given neural net coefs
@@ -173,11 +173,86 @@ def approx_pce_coefs_w_nn(xgrid, model, model_args,
     # Draw samples from PCE with neural net-based PCE coefficients 
     logs = n_samples * [None]
     for n in range(n_samples):
-        u_ests, logs[n], _ = sample_diffeq(**model_args)
+        u_ests, logs[n], _ = model(**model_args)
         
     k, Y, u, _, _, _ = logging.parse_logs(logs)
 
     return k, Y, u
+
+def approx_k_eigvecs_w_nn(xgrid, diffeq,
+    k_target, kl_dim, plot=True, unit_tests=False):
+    """
+    Approximate KL-expansion with neural network
+    Source: Zhang et al., 2019, Chapter 3.2.1
+    Args:
+        xgrid np.array(n_grid): Grid where function was evaluated
+        diffeq class: 
+        k_target np.array(n_samples, n_grid): Measurements
+        kl_dim int: Number of non-truncated eigenvalues for Karhunen-Loeve expansion
+        plot bool: if true, plot
+    """
+    n_samples, n_grid = k_target.shape
+
+    # Interpolate mu_k
+    mu_k_target =  np.mean(k_target,axis=0)[np.newaxis,:,np.newaxis]
+    mu_k_target_norm = (mu_k_target - np.mean(mu_k_target))# / np.std(mu_k_target) # Normalize (todo: integrate in NN)
+    mu_k_nn, _ = interpolate_param_nn(xgrid=xgrid[np.newaxis,:], y=mu_k_target_norm, 
+        n_epochs=2000, lr=0.000005, batch_size=2,  target_name="mu_k", plot=plot)
+    mu_k_nn = mu_k_nn + np.mean(mu_k_target)##(mu_k_nn * np.std(mu_k_target)) + np.mean(mu_k_target) #
+    # TODO WHY DOES A BATCH_SIZE > 1 largelgyEXTEND LEARNING TIME ?
+    # TODO: use wandb or MLflow for hyperparam opt. 
+    # Best: n_epochs=2000, lr=0.000005, batch_size=2, n_layers=2, n_units=128; only mean normalization
+    # 2nd best: n_epochs=2000, lr=0.00002, batch_size=2, n_layers=2, n_units=128; normal normalization
+    # good & quick: n_epochs=100, lr=0.002, batch_size=10, n_layers=2, n_units=128, normal normalization
+
+    # Interpolate k_eigvecs
+    cov = np.cov(k_target.T) # np.cov(k_target.T)
+    eigvals, eigvecs = np.linalg.eig(cov)
+    eigvecs_target = eigvecs[np.newaxis, :, :kl_dim]
+    #eigvecs_target = np.repeat(eigvecs_target[:,:], repeats=n_samples, axis=0)
+    k_eigvecs_nn, _ = interpolate_param_nn(xgrid=xgrid[np.newaxis,:], y=eigvecs_target, batch_size=n_grid, 
+        n_epochs=900, lr=0.0005,target_name="k_eigvecs", plot=plot)
+
+    # Extract random instances from measurements; Zhang et al., eq. (9)
+    k_norm = k_target-np.mean(k_target,axis=0)
+    cov_norm = np.cov(k_norm.T) 
+    eigvals_norm, eigvecs_norm = np.linalg.eig(cov)
+    eig_inv = 1./np.sqrt(eigvals_norm[:kl_dim])
+    z_msmt = np.matmul(np.multiply(eigvecs_norm[:,:kl_dim], eig_inv).T, k_norm.T[:,:]).T
+
+    # Sanity checks
+    if unit_tests:
+        # z_msmt centered; E[z_msmt] = 0
+        assert(np.allclose(np.mean(z_msmt,axis=0),0))  # E[z_msmt] = 0
+        # z_msmt uncorrelated; E[z_msmt_i z_msmt_j] = \delta_ij
+        assert(np.allclose(1./float(n_samples)*np.matmul(z_msmt.T,z_msmt), np.identity(kl_dim),atol=0.001))
+        # Check if there's numerical error in eigvals 
+        assert(np.all(eigvals[:kl_dim]>0.))
+        # Check that more than 95\% variance is explained in eigenvalues
+        var_explained = []
+        for eig_i in eigvals:
+            var_explained.append((float(eig_i)/np.sum(eigvals))*100.)
+        if np.cumsum(var_explained)[kl_dim]<95.:
+            print('Less than 95\% variance is captured in eigenvalues up to kl_dim')
+        
+    # Compute solution
+    import pdb;pdb.set_trace()
+    ks_nn = np.zeros((n_samples, n_grid))
+    ys_nn = np.zeros((n_samples, n_grid))
+    us_nn = np.zeros((n_samples, n_grid))
+    for n in range(n_samples):
+        # Sample from NN-based KL-expansion
+        ks_nn[n,:] = (mu_k_nn + np.matmul(np.multiply(k_eigvecs_nn[:,:kl_dim], z_msmt[n,:]), np.sqrt(eigvals[:kl_dim,np.newaxis])))[:,0]
+        ys_nn[n,:] = np.log(np.where(ks_nn[n,:]>0, ks_nn[n,:], 1.)) # = np.log(k_sample)
+        us_nn[n,:] = diffeq.diffusioneqn(xgrid, k=ks_nn[n,:])[:,0]
+
+    if plot:
+        plotting.plot_mu_k_vs_ks_nn(xgrid, mu_k_target[0,:,0], mu_k_nn)
+        plotting.plot_std_k_vs_ks_nn(xgrid, k_target, ks_nn)
+        plotting.plot_k_eigvecs_vs_ks_nn(xgrid, eigvecs_target[0,:,:], k_eigvecs_nn)
+        plotting.plot_kl_k_vs_ks_nn(xgrid, k_target, ks_nn)
+
+    return ks_nn, ys_nn, us_nn
 
 def approx_model_param_w_nn(xgrid, diffeq, k_target, k_true, 
     est_param_nn, kl_dim, pce_dim, rand_insts, n_samples, plot=True):
@@ -192,7 +267,7 @@ def approx_model_param_w_nn(xgrid, diffeq, k_target, k_true,
     """
     # TODO: try to move the query of multi_indices into pce.py
     alpha_indices = pce.multi_indices(ndim=kl_dim, pce_dim=pce_dim, order='total_degree')
-    #n_samples = 150#k.shape[0]#20
+
     x_in = np.repeat(xgrid[np.newaxis,:], repeats=n_samples, axis=0)
 
     # Approximate k measurements
@@ -200,7 +275,7 @@ def approx_model_param_w_nn(xgrid, diffeq, k_target, k_true,
         k_target = np.repeat(k_true[np.newaxis,:],repeats=n_samples, axis=0) # Observations
     #alpha_indices = alpha_indices[:,4:] # Omit constant pce coefficient
     # TODO: TEST IF BATCH SIZE CAN BE > n_grid
-    pce_coefs, ks_nn = get_param_nn(xgrid=x_in, y=k_target, target_name=est_param_nn, 
+    pce_coefs, ks_nn = interpolate_param_nn(xgrid=x_in, y=k_target, target_name=est_param_nn, 
         alpha_indices=alpha_indices, rand_insts=rand_insts,
         batch_size=151, n_epochs=100, n_test_samples=n_samples, plot=plot)
     if True:
@@ -292,14 +367,14 @@ if __name__ == "__main__":
     # Estimate various parameters with a neural network
     if args.nn_pce:
         import torch
-        from src.neural_net import get_param_nn
+        from src.neural_net import interpolate_param_nn
         torch.manual_seed(0)
 
         # Get dataset
-        logs = get_n_model_samples(model=sample_diffeq, model_args=model_args, 
+        logs = sample_model(model=sample_diffeq, model_args=model_args, 
             n_samples=args.n_samples, path_load_simdata=args.path_load_simdata)
         k, _, u, kl_trunc_errs, coefs, rand_insts = logging.parse_logs(logs)
-
+    
         # Use NN
         if args.est_param_nn=='pce_coefs':
             k, _, u = approx_pce_coefs_w_nn(xgrid=xgrid, model=sample_diffeq, model_args=model_args, 
@@ -310,6 +385,10 @@ if __name__ == "__main__":
             k, _, u = approx_model_param_w_nn(xgrid=xgrid, diffeq=stochDiffEq, k_target=k, 
                 k_true=k_true, est_param_nn=args.est_param_nn, kl_dim=kl_dim, pce_dim=pce_dim,
                 rand_insts=rand_insts, n_samples=args.n_samples, plot=True)
+
+        elif args.est_param_nn=='k_eigvecs':
+            k, _, u = approx_k_eigvecs_w_nn(xgrid=xgrid, diffeq=stochDiffEq,
+                k_target=k, kl_dim=kl_dim, plot=True)
 
     # Estimate model parameters with MCMC
     elif args.mcmc:

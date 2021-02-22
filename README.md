@@ -12,8 +12,8 @@ conda activate pce-pinns
 # Train NN to learn polynomial coefficients of deg. 3, fitting a gaussian process prior of diffusion, k
 python main.py --rand_flux_bc --pce --nn_pce --pce_dim 3 --n_samples 1000 --path_load_simdata pce_1k.pickle --est_param_nn k
 # Fit NN to observed diffusion, k  
-python main.py --rand_flux_bc --pce --nn_pce --pce_dim 3 --n_samples 8 --est_param_nn k_true        
-python main.py --rand_flux_bc --pce --nn_pce --pce_dim 3 --n_samples 1000 --est_param_nn k_true        
+python main.py --rand_flux_bc --pce --nn_pce --pce_dim 3 --n_samples 8 --est_param_nn k_true # -batch_size 151 n_epochs 100
+python main.py --rand_flux_bc --pce --nn_pce --pce_dim 3 --n_samples 1000 --est_param_nn k_true #--batch_size 151 n_epochs 5
 ```
 
 # References 
